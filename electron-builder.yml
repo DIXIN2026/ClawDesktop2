@@ -1,0 +1,74 @@
+appId: app.clawdesktop2
+productName: ClawDesktop2
+copyright: Copyright © 2026 ClawDesktop2
+compression: maximum
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+
+directories:
+  output: release
+  buildResources: resources
+
+files:
+  - dist
+  - dist-electron
+  - package.json
+
+asar: true
+asarUnpack:
+  - "**/*.node"
+
+npmRebuild: false
+
+mac:
+  category: public.app-category.developer-tools
+  icon: resources/icons/icon.icns
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  darkModeSupport: true
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: false
+
+dmg:
+  icon: resources/icons/icon.icns
+  iconSize: 100
+  window:
+    width: 540
+    height: 380
+  contents:
+    - type: file
+      x: 130
+      y: 220
+    - type: link
+      path: /Applications
+      x: 410
+      y: 220
+
+win:
+  icon: resources/icons/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - arm64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+linux:
+  icon: resources/icons
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+  category: Development
