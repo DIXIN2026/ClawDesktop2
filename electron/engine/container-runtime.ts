@@ -2,7 +2,7 @@
  * Container Runtime Abstraction
  * Detects and abstracts Docker / Apple Container runtimes
  */
-import { execSync, execFile } from 'child_process';
+import { execFileSync, execFile } from 'child_process';
 
 export type ContainerRuntimeType = 'docker' | 'apple-container';
 
@@ -17,7 +17,7 @@ let cachedRuntime: ContainerRuntime | null = null;
 
 function checkCommand(cmd: string): { available: boolean; version?: string } {
   try {
-    const output = execSync(`${cmd} --version`, { timeout: 5000, encoding: 'utf-8' });
+    const output = execFileSync(cmd, ['--version'], { timeout: 5000, encoding: 'utf-8' });
     return { available: true, version: output.trim() };
   } catch {
     return { available: false };

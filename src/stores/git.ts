@@ -16,7 +16,14 @@ export interface GitStatus {
   behind: number;
 }
 
+export interface GitWorktree {
+  path: string;
+  branch: string;
+  isMain: boolean;
+}
+
 interface GitState {
+  workDirectory: string | null;
   branch: string;
   files: FileChange[];
   ahead: number;
@@ -24,7 +31,10 @@ interface GitState {
   diffContent: string;
   selectedFile: string | null;
   isLoading: boolean;
+  worktrees: GitWorktree[];
+  isWorktreeLoading: boolean;
 
+  setWorkDirectory: (workDirectory: string | null | undefined) => Promise<void>;
   refreshStatus: () => Promise<void>;
   loadDiff: (filePath?: string) => Promise<void>;
   stageFiles: (paths: string[]) => Promise<void>;
@@ -34,12 +44,16 @@ interface GitState {
   push: () => Promise<void>;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
+  loadWorktrees: () => Promise<void>;
+  createWorktree: (branch: string, path: string) => Promise<void>;
+  removeWorktree: (path: string) => Promise<void>;
   selectFile: (path: string | null) => void;
 }
 
 // ── Store ───────────────────────────────────────────────────────────
 
 export const useGitStore = create<GitState>((set, get) => ({
+  workDirectory: null,
   branch: '',
   files: [],
   ahead: 0,
@@ -47,11 +61,31 @@ export const useGitStore = create<GitState>((set, get) => ({
   diffContent: '',
   selectedFile: null,
   isLoading: false,
+  worktrees: [],
+  isWorktreeLoading: false,
+
+  setWorkDirectory: async (workDirectory) => {
+    const normalized = typeof workDirectory === 'string' && workDirectory.trim().length > 0
+      ? workDirectory.trim()
+      : null;
+    if (get().workDirectory === normalized) return;
+
+    set({
+      workDirectory: normalized,
+      selectedFile: null,
+      diffContent: '',
+    });
+
+    await Promise.allSettled([
+      get().refreshStatus(),
+      get().loadWorktrees(),
+    ]);
+  },
 
   refreshStatus: async () => {
     set({ isLoading: true });
     try {
-      const status = await ipc.gitStatus();
+      const status = await ipc.gitStatus(get().workDirectory ?? undefined);
       set({
         branch: status.branch,
         files: status.files,
@@ -67,7 +101,7 @@ export const useGitStore = create<GitState>((set, get) => ({
 
   loadDiff: async (filePath) => {
     try {
-      const diff = await ipc.gitDiff(filePath);
+      const diff = await ipc.gitDiff(filePath, get().workDirectory ?? undefined);
       set({ diffContent: diff });
     } catch (err) {
       console.error('[Git] loadDiff failed:', err instanceof Error ? err.message : String(err));
@@ -76,39 +110,60 @@ export const useGitStore = create<GitState>((set, get) => ({
   },
 
   stageFiles: async (paths) => {
-    await ipc.gitStage(paths);
+    await ipc.gitStage(paths, get().workDirectory ?? undefined);
     await get().refreshStatus();
   },
 
   unstageFiles: async (paths) => {
-    await ipc.gitUnstage(paths);
+    await ipc.gitUnstage(paths, get().workDirectory ?? undefined);
     await get().refreshStatus();
   },
 
   revertFiles: async (paths) => {
-    await ipc.gitRevert(paths);
+    await ipc.gitRevert(paths, get().workDirectory ?? undefined);
     await get().refreshStatus();
   },
 
   commit: async (message) => {
-    const result = await ipc.gitCommit(message);
+    const result = await ipc.gitCommit(message, get().workDirectory ?? undefined);
     await get().refreshStatus();
     return result.commitHash;
   },
 
   push: async () => {
-    await ipc.gitPush();
+    await ipc.gitPush(get().workDirectory ?? undefined);
     await get().refreshStatus();
   },
 
   undo: async () => {
-    await ipc.gitUndo();
+    await ipc.gitUndo(undefined, get().workDirectory ?? undefined);
     await get().refreshStatus();
   },
 
   redo: async () => {
-    await ipc.gitRedo();
+    await ipc.gitRedo(get().workDirectory ?? undefined);
     await get().refreshStatus();
+  },
+
+  loadWorktrees: async () => {
+    set({ isWorktreeLoading: true });
+    try {
+      const worktrees = await ipc.gitWorktreeList(get().workDirectory ?? undefined);
+      set({ worktrees, isWorktreeLoading: false });
+    } catch (err) {
+      console.error('[Git] loadWorktrees failed:', err instanceof Error ? err.message : String(err));
+      set({ worktrees: [], isWorktreeLoading: false });
+    }
+  },
+
+  createWorktree: async (branch, path) => {
+    await ipc.gitWorktreeCreate(branch, path, get().workDirectory ?? undefined);
+    await get().loadWorktrees();
+  },
+
+  removeWorktree: async (path) => {
+    await ipc.gitWorktreeRemove(path, get().workDirectory ?? undefined);
+    await get().loadWorktrees();
   },
 
   selectFile: (path) => {

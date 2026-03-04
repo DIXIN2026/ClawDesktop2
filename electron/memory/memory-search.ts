@@ -116,7 +116,7 @@ export async function searchMemory(
 
   // Vector search (if adapter available)
   let vectorScores = new Map<string, number>();
-  if (embeddingAdapter?.isAvailable()) {
+  if (config.embeddingEnabled && embeddingAdapter?.isAvailable()) {
     try {
       vectorScores = await vectorSearch(embeddingAdapter, options.query, maxResults);
     } catch (err) {

@@ -70,21 +70,9 @@ function createOllamaAdapter(baseUrl: string, model: string): EmbeddingAdapter {
 
   return {
     isAvailable: () => {
-      // Cache availability check
       if (available !== null) return available;
-
-      // Check if Ollama is running
-      try {
-        const response = fetch(`${baseUrl.replace(/\/+$/, '')}/api/tags`, {
-          method: 'GET',
-          signal: AbortSignal.timeout(2000),
-        });
-        available = true;
-        return true;
-      } catch {
-        available = false;
-        return false;
-      }
+      // Probe lazily via real embedding requests to avoid sync/async mismatch.
+      return true;
     },
 
     getDimensions: () => dimensions,
@@ -105,6 +93,7 @@ function createOllamaAdapter(baseUrl: string, model: string): EmbeddingAdapter {
 
           if (!response.ok) {
             console.warn(`[OllamaAdapter] Embedding failed: ${response.status} ${response.statusText}`);
+            available = false;
             // Return zero vector on failure
             results.push(new Float32Array(dimensions || 768));
             continue;
@@ -115,15 +104,18 @@ function createOllamaAdapter(baseUrl: string, model: string): EmbeddingAdapter {
 
           if (!embedding) {
             console.warn('[OllamaAdapter] No embedding returned');
+            available = false;
             results.push(new Float32Array(dimensions || 768));
             continue;
           }
 
           const arr = new Float32Array(embedding);
+          available = true;
           if (dimensions === 0) dimensions = arr.length;
           results.push(arr);
         } catch (err) {
           console.warn('[OllamaAdapter] Request failed:', err instanceof Error ? err.message : String(err));
+          available = false;
           results.push(new Float32Array(dimensions || 768));
         }
       }

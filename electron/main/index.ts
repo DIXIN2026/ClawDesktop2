@@ -5,6 +5,7 @@
 import { app, BrowserWindow, dialog, session, shell } from 'electron';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { mkdirSync } from 'fs';
 import { registerIpcHandlers } from './ipc-handlers.js';
 import { createTray } from './tray.js';
 import { createMenu } from './menu.js';
@@ -19,10 +20,14 @@ import { stopPreviewServer } from '../agents/design-preview.js';
 import { TaskScheduler } from '../engine/task-scheduler.js';
 import { createAgentExecutor } from '../engine/agent-executor.js';
 import type { ScheduledTaskRow } from '../utils/db.js';
-import { getChatSession } from '../utils/db.js';
+import { getChatSession, getChannelState } from '../utils/db.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const runtimeSessionDataPath = join(process.cwd(), '.clawdesktop2-session');
+
+mkdirSync(runtimeSessionDataPath, { recursive: true });
+app.setPath('sessionData', runtimeSessionDataPath);
 
 app.disableHardwareAcceleration();
 
@@ -33,6 +38,38 @@ let stopChannelRouter: (() => void) | null = null;
 
 export function getMainWindow(): BrowserWindow | null {
   return mainWindow;
+}
+
+async function sendTaskResultEmail(task: ScheduledTaskRow, status: 'success' | 'error', result: string): Promise<void> {
+  const configured = (getChannelState('email') as { config?: string | null } | undefined)?.config;
+  if (!configured) return;
+
+  const manager = getChannelManager();
+  const emailChannel = manager.getChannel('email');
+  if (!emailChannel) return;
+
+  try {
+    if (manager.getStatus('email') !== 'connected') {
+      await manager.start('email');
+    }
+    if (manager.getStatus('email') !== 'connected') {
+      return;
+    }
+
+    const mailBody = [
+      `Task: ${task.name ?? task.id}`,
+      `Status: ${status}`,
+      `Agent: ${task.agent_type ?? 'coding'}`,
+      `Schedule: ${task.schedule_type ?? '-'} ${task.schedule_expr ?? ''}`.trim(),
+      `Time: ${new Date().toISOString()}`,
+      '',
+      'Result:',
+      result.slice(0, 2000),
+    ].join('\n');
+    await manager.sendMessage('email', `email:task:${task.id}`, mailBody);
+  } catch (err) {
+    console.warn('[Schedule] Failed to send email notification:', err instanceof Error ? err.message : String(err));
+  }
 }
 
 function createWindow(): BrowserWindow {
@@ -134,7 +171,7 @@ async function initialize(): Promise<void> {
   setApprovalWindow(mainWindow);
 
   // Register messaging channels (Feishu, QQ)
-  registerChannels();
+  await registerChannels();
 
   // Bridge incoming channel messages to the same agent executor pipeline.
   const channelRouterExecutor = createAgentExecutor();
@@ -171,23 +208,33 @@ async function initialize(): Promise<void> {
     executeTask: async (task: ScheduledTaskRow) => {
       const agentType = (task.agent_type ?? 'coding') as 'coding' | 'requirements' | 'design' | 'testing';
       let output = '';
-      await new Promise<void>((resolve, reject) => {
-        schedulerExecutor.execute({
-          sessionId: `sched-${task.id}-${Date.now()}`,
-          prompt: task.prompt ?? '',
-          workDirectory: task.work_directory ?? process.cwd(),
-          agentType,
-          mode: 'cli',
-          onEvent: (event) => {
-            if (event.type === 'text_delta' && event.content) {
-              output += event.content;
-            }
-            if (event.type === 'turn_end') resolve();
-            if (event.type === 'error') reject(new Error(event.errorMessage ?? 'Task execution error'));
-          },
-        }).catch(reject);
-      });
-      return { status: 'success', result: output.slice(0, 500) };
+      let status: 'success' | 'error' = 'success';
+      let resultSummary: string;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          schedulerExecutor.execute({
+            sessionId: `sched-${task.id}-${Date.now()}`,
+            prompt: task.prompt ?? '',
+            workDirectory: task.work_directory ?? process.cwd(),
+            agentType,
+            mode: 'cli',
+            onEvent: (event) => {
+              if (event.type === 'text_delta' && event.content) {
+                output += event.content;
+              }
+              if (event.type === 'turn_end') resolve();
+              if (event.type === 'error') reject(new Error(event.errorMessage ?? 'Task execution error'));
+            },
+          }).catch(reject);
+        });
+        resultSummary = output.slice(0, 500);
+      } catch (err) {
+        status = 'error';
+        resultSummary = err instanceof Error ? err.message : String(err);
+      }
+
+      await sendTaskResultEmail(task, status, resultSummary);
+      return { status, result: resultSummary };
     },
   });
   taskScheduler.start();

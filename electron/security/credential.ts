@@ -5,6 +5,7 @@
 import { safeStorage, dialog } from 'electron';
 
 const CREDENTIAL_PREFIX = 'clawdesktop2:';
+const SECRET_KEY_PREFIX = 'secret:';
 
 interface CredentialStore {
   get: (key: string) => string | undefined;
@@ -31,31 +32,31 @@ async function getStore(): Promise<CredentialStore> {
   return credStore;
 }
 
-export async function storeApiKey(providerId: string, apiKey: string): Promise<void> {
+async function storeEncryptedValue(key: string, value: string): Promise<void> {
   const store = await getStore();
   if (safeStorage.isEncryptionAvailable()) {
-    const encrypted = safeStorage.encryptString(apiKey);
-    store.set(`${CREDENTIAL_PREFIX}${providerId}`, encrypted.toString('base64'));
-  } else {
-    console.warn(
-      `[SECURITY WARNING] OS keychain encryption unavailable. ` +
-      `API key for "${providerId}" stored WITHOUT encryption.`,
-    );
-    // Notify the user about the security risk
-    dialog.showMessageBox({
-      type: 'warning',
-      title: '安全警告',
-      message: 'OS 密钥链加密不可用',
-      detail: `API Key 将以明文方式存储在本地配置文件中。这可能导致安全风险。建议确保操作系统的密钥链服务正常运行。`,
-      buttons: ['我已了解'],
-    }).catch(() => { /* dialog may fail in headless mode */ });
-    store.set(`${CREDENTIAL_PREFIX}${providerId}`, apiKey);
+    const encrypted = safeStorage.encryptString(value);
+    store.set(`${CREDENTIAL_PREFIX}${key}`, encrypted.toString('base64'));
+    return;
   }
+
+  console.warn(
+    `[SECURITY WARNING] OS keychain encryption unavailable. ` +
+    `Credential "${key}" stored WITHOUT encryption.`,
+  );
+  dialog.showMessageBox({
+    type: 'warning',
+    title: '安全警告',
+    message: 'OS 密钥链加密不可用',
+    detail: `敏感信息将以明文方式存储在本地配置文件中。这可能导致安全风险。建议确保操作系统的密钥链服务正常运行。`,
+    buttons: ['我已了解'],
+  }).catch(() => { /* dialog may fail in headless mode */ });
+  store.set(`${CREDENTIAL_PREFIX}${key}`, value);
 }
 
-export async function getApiKey(providerId: string): Promise<string | undefined> {
+async function readEncryptedValue(key: string): Promise<string | undefined> {
   const store = await getStore();
-  const stored = store.get(`${CREDENTIAL_PREFIX}${providerId}`);
+  const stored = store.get(`${CREDENTIAL_PREFIX}${key}`);
   if (!stored) return undefined;
 
   if (safeStorage.isEncryptionAvailable()) {
@@ -64,8 +65,8 @@ export async function getApiKey(providerId: string): Promise<string | undefined>
       return safeStorage.decryptString(buffer);
     } catch (err) {
       console.error(
-        `[ERROR] Failed to decrypt API key for "${providerId}". ` +
-        `The stored credential may be corrupted. Re-enter the key in Settings.`,
+        `[ERROR] Failed to decrypt credential "${key}". ` +
+        `The stored credential may be corrupted.`,
         err instanceof Error ? err.message : String(err),
       );
       return undefined;
@@ -73,6 +74,36 @@ export async function getApiKey(providerId: string): Promise<string | undefined>
   }
 
   return stored;
+}
+
+function makeSecretKey(secretId: string): string {
+  return `${SECRET_KEY_PREFIX}${secretId}`;
+}
+
+export async function storeSecret(secretId: string, secret: string): Promise<void> {
+  await storeEncryptedValue(makeSecretKey(secretId), secret);
+}
+
+export async function getSecret(secretId: string): Promise<string | undefined> {
+  return readEncryptedValue(makeSecretKey(secretId));
+}
+
+export async function deleteSecret(secretId: string): Promise<void> {
+  const store = await getStore();
+  store.delete(`${CREDENTIAL_PREFIX}${makeSecretKey(secretId)}`);
+}
+
+export async function hasSecret(secretId: string): Promise<boolean> {
+  const store = await getStore();
+  return store.has(`${CREDENTIAL_PREFIX}${makeSecretKey(secretId)}`);
+}
+
+export async function storeApiKey(providerId: string, apiKey: string): Promise<void> {
+  await storeEncryptedValue(providerId, apiKey);
+}
+
+export async function getApiKey(providerId: string): Promise<string | undefined> {
+  return readEncryptedValue(providerId);
 }
 
 export async function deleteApiKey(providerId: string): Promise<void> {
@@ -90,7 +121,8 @@ export async function listStoredProviders(): Promise<string[]> {
   const allKeys = Object.keys(store.store);
   return allKeys
     .filter(k => k.startsWith(CREDENTIAL_PREFIX))
-    .map(k => k.slice(CREDENTIAL_PREFIX.length));
+    .map(k => k.slice(CREDENTIAL_PREFIX.length))
+    .filter(k => !k.startsWith(SECRET_KEY_PREFIX));
 }
 
 /** Filter credentials from log output */

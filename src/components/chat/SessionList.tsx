@@ -7,6 +7,9 @@ import {
   FileText,
   Palette,
   TestTube,
+  GitBranch,
+  FolderTree,
+  RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -18,6 +21,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import type { ChatSession } from '@/stores/chat';
+import type { GitWorktree } from '@/stores/git';
 
 interface SessionListProps {
   sessions: ChatSession[];
@@ -25,6 +29,13 @@ interface SessionListProps {
   onSelect: (id: string) => void;
   onCreate: () => void;
   onDelete: (id: string) => void;
+  worktrees?: GitWorktree[];
+  currentWorktreePath?: string | null;
+  onWorktreeRefresh?: () => void;
+  onWorktreeCreate?: (branch: string, path: string) => void;
+  onWorktreeDelete?: (path: string) => void;
+  onWorktreeStartChat?: (worktree: GitWorktree) => void;
+  defaultWorktreeBase?: string | null;
 }
 
 const AGENT_ICONS: Record<string, React.ReactNode> = {
@@ -54,6 +65,13 @@ export function SessionList({
   onSelect,
   onCreate,
   onDelete,
+  worktrees = [],
+  currentWorktreePath,
+  onWorktreeRefresh,
+  onWorktreeCreate,
+  onWorktreeDelete,
+  onWorktreeStartChat,
+  defaultWorktreeBase,
 }: SessionListProps) {
   const [contextMenuTarget, setContextMenuTarget] = useState<string | null>(null);
 
@@ -75,7 +93,7 @@ export function SessionList({
 
       {/* Session list */}
       <ScrollArea className="flex-1">
-        <div className="px-2 py-1 space-y-0.5">
+        <div className="px-2 py-1 space-y-2">
           {sessions.length === 0 && (
             <div className="px-2 py-8 text-center text-xs text-muted-foreground">
               No conversations yet
@@ -139,6 +157,99 @@ export function SessionList({
               </DropdownMenu>
             );
           })}
+
+          <div className="pt-2 border-t border-border/70">
+            <div className="flex items-center justify-between px-1.5 pb-1.5">
+              <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+                <FolderTree className="h-3.5 w-3.5" />
+                Worktrees
+              </div>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  title="Refresh worktrees"
+                  onClick={onWorktreeRefresh}
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  title="Create worktree"
+                  onClick={() => {
+                    if (!onWorktreeCreate) return;
+                    const branch = window.prompt('Branch name for new worktree');
+                    if (!branch) return;
+                    const safeBranch = branch.trim();
+                    if (!safeBranch) return;
+                    const baseDir = defaultWorktreeBase?.trim() || '.';
+                    const defaultPath = `${baseDir}/.claw-worktrees/${safeBranch.replace(/[^\w.-]/g, '-')}`;
+                    const path = window.prompt('Worktree path', defaultPath);
+                    if (!path) return;
+                    onWorktreeCreate(safeBranch, path.trim());
+                  }}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-0.5">
+              {worktrees.length === 0 && (
+                <div className="px-2 py-2 text-[11px] text-muted-foreground">
+                  No worktrees
+                </div>
+              )}
+              {worktrees.map((worktree) => {
+                const isActive = currentWorktreePath === worktree.path;
+                return (
+                  <div
+                    key={`${worktree.path}-${worktree.branch}`}
+                    className={cn(
+                      'group flex items-center gap-1.5 rounded-md px-2 py-1.5',
+                      isActive ? 'bg-accent/80' : 'hover:bg-accent/40',
+                    )}
+                  >
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 text-left"
+                      onClick={() => onWorktreeStartChat?.(worktree)}
+                      title={worktree.path}
+                    >
+                      <div className="flex items-center gap-1.5 text-xs">
+                        <GitBranch className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                        <span className="truncate font-medium">
+                          {worktree.branch || '(detached)'}
+                        </span>
+                        {worktree.isMain && (
+                          <span className="text-[10px] text-muted-foreground shrink-0">
+                            main
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground truncate pl-5">
+                        {worktree.path}
+                      </div>
+                    </button>
+                    {!worktree.isMain && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                        title="Remove worktree"
+                        onClick={() => onWorktreeDelete?.(worktree.path)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </ScrollArea>
     </div>

@@ -1,10 +1,11 @@
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { Settings, Server, Shield, Info } from 'lucide-react';
+import { Settings, Server, Shield, Info, Brain } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { GeneralSettings } from './General';
 import { ProvidersSettings } from './Providers';
 import { SecuritySettings } from './Security';
 import { AboutSettings } from './About';
+import { MemorySettings } from './Memory';
 
 interface SettingsNav {
   label: string;
@@ -15,6 +16,7 @@ interface SettingsNav {
 const SETTINGS_NAV: SettingsNav[] = [
   { label: '通用', path: '/settings', icon: Settings },
   { label: '模型供应商', path: '/settings/providers', icon: Server },
+  { label: '记忆', path: '/settings/memory', icon: Brain },
   { label: '安全', path: '/settings/security', icon: Shield },
   { label: '关于', path: '/settings/about', icon: Info },
 ];
@@ -49,6 +51,7 @@ export function SettingsPage() {
         <Routes>
           <Route index element={<GeneralSettings />} />
           <Route path="providers" element={<ProvidersSettings />} />
+          <Route path="memory" element={<MemorySettings />} />
           <Route path="security" element={<SecuritySettings />} />
           <Route path="about" element={<AboutSettings />} />
         </Routes>

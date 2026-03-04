@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Radio, Plug, PlugZap, Save, TestTube, Loader2, Play, Square } from 'lucide-react';
+import { Radio, Plug, PlugZap, Save, TestTube, Loader2, Play, Square, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -12,7 +12,7 @@ import { Separator } from '@/components/ui/separator';
 import { ipc } from '@/services/ipc';
 
 type ConnectionStatus = 'connected' | 'connecting' | 'reconnecting' | 'disconnected' | 'error' | 'not-configured';
-type ChannelId = 'feishu' | 'feishu2' | 'qq';
+type ChannelId = 'feishu' | 'feishu2' | 'qq' | 'email';
 
 interface FeishuConfig {
   appId: string;
@@ -26,6 +26,17 @@ interface QQConfig {
   appId: string;
   clientSecret: string;
   sandbox: boolean;
+}
+
+interface EmailConfig {
+  host: string;
+  port: number;
+  secure: boolean;
+  username: string;
+  password: string;
+  from: string;
+  to: string;
+  subjectPrefix: string;
 }
 
 const STATUS_CONFIG: Record<ConnectionStatus, { label: string; variant: 'default' | 'secondary' | 'destructive' }> = {
@@ -69,6 +80,16 @@ export function ChannelsPage() {
     clientSecret: '',
     sandbox: false,
   });
+  const [emailConfig, setEmailConfig] = useState<EmailConfig>({
+    host: '',
+    port: 465,
+    secure: true,
+    username: '',
+    password: '',
+    from: '',
+    to: '',
+    subjectPrefix: 'ClawDesktop',
+  });
 
   const refreshStatuses = useCallback(async () => {
     try {
@@ -90,15 +111,17 @@ export function ChannelsPage() {
   }, []);
 
   const loadConfigs = useCallback(async () => {
-    const [feishuRaw, feishu2Raw, qqRaw] = await Promise.all([
+    const [feishuRaw, feishu2Raw, qqRaw, emailRaw] = await Promise.all([
       ipc.getSetting('channel:feishu:config').catch(() => null),
       ipc.getSetting('channel:feishu2:config').catch(() => null),
       ipc.getSetting('channel:qq:config').catch(() => null),
+      ipc.getSetting('channel:email:config').catch(() => null),
     ]);
 
     const f1 = parseConfig<Partial<FeishuConfig>>(feishuRaw);
     const f2 = parseConfig<Partial<FeishuConfig>>(feishu2Raw);
     const qq = parseConfig<Partial<QQConfig>>(qqRaw);
+    const email = parseConfig<Partial<EmailConfig>>(emailRaw);
 
     if (f1) {
       setFeishuConfig((prev) => ({
@@ -121,12 +144,35 @@ export function ChannelsPage() {
         sandbox: qq.sandbox === true,
       }));
     }
+    if (email) {
+      setEmailConfig((prev) => ({
+        ...prev,
+        ...email,
+        port: typeof email.port === 'number' ? email.port : prev.port,
+        secure: email.secure !== undefined ? email.secure : prev.secure,
+      }));
+    }
   }, []);
 
   useEffect(() => {
     void loadConfigs();
     void refreshStatuses();
   }, [loadConfigs, refreshStatuses]);
+
+  useEffect(() => {
+    const unsubscribe = ipc.onChannelStatus((event) => {
+      if (!event?.channelId) return;
+      const status = event.status as ConnectionStatus;
+      if (!(status in STATUS_CONFIG)) return;
+      setStatuses((prev) => ({
+        ...prev,
+        [event.channelId]: status,
+      }));
+    });
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
 
   const getStatus = (id: ChannelId): ConnectionStatus => statuses[id] ?? 'not-configured';
 
@@ -183,7 +229,7 @@ export function ChannelsPage() {
           <h1 className="text-2xl font-bold">Channels</h1>
         </div>
         <p className="text-muted-foreground">
-          支持三条生产渠道：飞书 1（OpenClaw 风格）、飞书 2（CoPaw 风格）、QQ。
+          支持四条渠道：飞书 1（OpenClaw 风格）、飞书 2（CoPaw 风格）、QQ、Email（SMTP）。
         </p>
 
         <Card>
@@ -360,6 +406,90 @@ export function ChannelsPage() {
                 启动
               </Button>
               <Button size="sm" variant="outline" onClick={() => void stopChannel('qq')} disabled={loadingAction === 'stop:qq'}>
+                <Square className="h-4 w-4 mr-1" />
+                停止
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Mail className="h-4 w-4" />
+              Email（SMTP）
+            </CardTitle>
+            <CardDescription>用于发送任务结果或系统通知邮件。</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center gap-2">
+              {getStatus('email') === 'connected' ? (
+                <PlugZap className="h-4 w-4 text-green-500" />
+              ) : (
+                <Plug className="h-4 w-4 text-muted-foreground" />
+              )}
+              <Badge variant={STATUS_CONFIG[getStatus('email')].variant}>
+                {STATUS_CONFIG[getStatus('email')].label}
+              </Badge>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>SMTP Host</Label>
+                <Input value={emailConfig.host} onChange={(e) => setEmailConfig((p) => ({ ...p, host: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>SMTP Port</Label>
+                <Input
+                  type="number"
+                  value={emailConfig.port}
+                  onChange={(e) => setEmailConfig((p) => ({ ...p, port: Number(e.target.value) || 0 }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Username</Label>
+                <Input value={emailConfig.username} onChange={(e) => setEmailConfig((p) => ({ ...p, username: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Password</Label>
+                <Input type="password" value={emailConfig.password} onChange={(e) => setEmailConfig((p) => ({ ...p, password: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>From</Label>
+                <Input value={emailConfig.from} onChange={(e) => setEmailConfig((p) => ({ ...p, from: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>To</Label>
+                <Input value={emailConfig.to} onChange={(e) => setEmailConfig((p) => ({ ...p, to: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Subject Prefix</Label>
+                <Input value={emailConfig.subjectPrefix} onChange={(e) => setEmailConfig((p) => ({ ...p, subjectPrefix: e.target.value }))} />
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch checked={emailConfig.secure} onCheckedChange={(checked) => setEmailConfig((p) => ({ ...p, secure: checked }))} />
+              <Label>TLS/SSL（secure）</Label>
+            </div>
+            <Separator />
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                onClick={() => void saveChannel('email', emailConfig as unknown as Record<string, unknown>)}
+                disabled={loadingAction === 'save:email'}
+              >
+                {loadingAction === 'save:email' ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
+                保存
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => void testChannel('email')} disabled={loadingAction === 'test:email'}>
+                {loadingAction === 'test:email' ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <TestTube className="h-4 w-4 mr-1" />}
+                测试并发送
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => void startChannel('email')} disabled={loadingAction === 'start:email'}>
+                <Play className="h-4 w-4 mr-1" />
+                启动
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => void stopChannel('email')} disabled={loadingAction === 'stop:email'}>
                 <Square className="h-4 w-4 mr-1" />
                 停止
               </Button>

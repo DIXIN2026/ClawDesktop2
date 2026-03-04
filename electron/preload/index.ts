@@ -56,6 +56,7 @@ const VALID_INVOKE_CHANNELS = [
   // Chat
   'chat:send',
   'chat:abort',
+  'chat:clarification-response',
   'chat:history',
   'chat:switch-model',
   // Agents
@@ -66,7 +67,9 @@ const VALID_INVOKE_CHANNELS = [
   'agents:set-model',
   // Skills
   'skills:search',
+  'skills:generate',
   'skills:install',
+  'skills:install-generated',
   'skills:uninstall',
   'skills:list',
   // Tasks
@@ -111,10 +114,12 @@ const VALID_INVOKE_CHANNELS = [
   // Memory
   'memory:search',
   'memory:stats',
+  'memory:preferences:list',
   'memory:config:get',
   'memory:config:set',
   'memory:delete',
   'memory:delete-session',
+  'memory:preferences:delete',
   'memory:reindex',
   // Git
   'git:status',

@@ -135,4 +135,18 @@ export interface MemoryStats {
   chunksWithEmbeddings: number;
   oldestChunkDate: string | null;
   newestChunkDate: string | null;
+  totalGraphEntities?: number;
+  totalGraphRelations?: number;
+  totalPreferenceObservations?: number;
+}
+
+export interface MemoryPreferenceObservation {
+  id: string;
+  content: string;
+  category: 'preference' | 'fact' | 'constraint';
+  confidence: number;
+  sessionId: string | null;
+  sourceChunkId: string | null;
+  createdAt: string;
+  updatedAt: string;
 }

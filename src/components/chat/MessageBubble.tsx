@@ -11,10 +11,36 @@ interface MessageBubbleProps {
   message: ChatMessage;
 }
 
+function sanitizeImageUrl(url: string): string | null {
+  if (url.startsWith('data:image/')) return url;
+  if (url.startsWith('blob:')) return url;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      return parsed.toString();
+    }
+  } catch {
+    // ignore invalid URL
+  }
+  return null;
+}
+
 function StreamingCursor() {
   return (
     <span className="inline-block w-2 h-4 ml-0.5 bg-foreground animate-pulse rounded-sm" />
   );
+}
+
+function renderImageUrl(message: ChatMessage, index: number): string | null {
+  const attachment = message.attachments?.[index];
+  if (!attachment || attachment.type !== 'image') return null;
+  if (attachment.url && typeof attachment.url === 'string') {
+    return sanitizeImageUrl(attachment.url);
+  }
+  if (attachment.data && attachment.mimeType.startsWith('image/')) {
+    return `data:${attachment.mimeType};base64,${attachment.data}`;
+  }
+  return null;
 }
 
 export function MessageBubble({ message }: MessageBubbleProps) {
@@ -54,8 +80,35 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         )}
       >
         {isUser ? (
-          <div className="text-sm whitespace-pre-wrap break-words">
-            {message.content}
+          <div className="space-y-2">
+            {message.attachments && message.attachments.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {message.attachments.map((attachment, idx) => {
+                  const imageUrl = renderImageUrl(message, idx);
+                  if (!imageUrl) return null;
+                  return (
+                    <a
+                      key={`${attachment.name ?? 'image'}-${idx}`}
+                      href={imageUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block rounded-md overflow-hidden border border-white/20"
+                    >
+                      <img
+                        src={imageUrl}
+                        alt={attachment.name ?? `image-${idx + 1}`}
+                        className="max-h-56 max-w-[240px] object-cover"
+                      />
+                    </a>
+                  );
+                })}
+              </div>
+            )}
+            {message.content && (
+              <div className="text-sm whitespace-pre-wrap break-words">
+                {message.content}
+              </div>
+            )}
           </div>
         ) : (
           <div className="prose prose-sm dark:prose-invert max-w-none break-words">

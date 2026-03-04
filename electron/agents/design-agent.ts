@@ -48,10 +48,23 @@ export interface DesignAgentConfig {
   onPassChange: (pass: DesignPass) => void;
   callLLM: (params: {
     system: string;
-    messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+    messages: Array<{
+      role: 'user' | 'assistant';
+      content: string | Array<
+        { type: 'text'; text: string } |
+        { type: 'image'; mimeType: string; data: string }
+      >;
+    }>;
   }) => AsyncIterable<string>;
+  initialAttachments?: Array<{ mimeType: string; data: string }>;
   writeFile: (path: string, content: string) => Promise<void>;
   startPreview?: (dir: string) => Promise<string>; // returns preview URL
+  capturePreviewScreenshot?: (previewUrl: string) => Promise<{
+    mimeType: string;
+    data: string;
+    width: number;
+    height: number;
+  }>;
   validateCode?: (code: string, filename: string) => Promise<Array<{ error: string; line?: number }>>;
 }
 
@@ -116,6 +129,30 @@ const VALIDATE_PROMPT = `你是一个代码审查专家。以下 React/TypeScrip
 
 输出修复后的完整代码：`;
 
+const VISUAL_CHECK_PROMPT = `你是资深 UI 视觉审查专家。请基于截图评估设计质量并给出可执行改进建议。
+
+输出格式：
+## 视觉审查结果
+### 优点
+- ...
+### 问题
+- ...
+### 建议修复（按优先级）
+- P0: ...
+- P1: ...
+- P2: ...
+
+要求：
+- 聚焦布局、层级、可读性、对比度、间距、一致性、交互可见性。
+- 只输出与截图可观察事实相关的结论，避免臆测。`;
+
+type DesignMessageContent =
+  | string
+  | Array<
+    { type: 'text'; text: string } |
+    { type: 'image'; mimeType: string; data: string }
+  >;
+
 /**
  * Validate that a filename from LLM output is a safe relative path.
  * Blocks path traversal (../), absolute paths, and null bytes.
@@ -137,6 +174,7 @@ export class DesignAgent {
   private context: DesignContext;
   private config: DesignAgentConfig;
   private aborted = false;
+  private initialAttachmentsUsed = false;
 
   constructor(userInput: string, config: DesignAgentConfig) {
     this.context = {
@@ -200,7 +238,7 @@ export class DesignAgent {
     this.aborted = true;
   }
 
-  private async collectStream(system: string, userContent: string): Promise<string> {
+  private async collectStreamFromContent(system: string, userContent: DesignMessageContent): Promise<string> {
     let result = '';
     const stream = this.config.callLLM({
       system,
@@ -216,6 +254,26 @@ export class DesignAgent {
       });
     }
     return result;
+  }
+
+  private async collectStream(system: string, userText: string): Promise<string> {
+    const includeInitialAttachments = !this.initialAttachmentsUsed
+      && Array.isArray(this.config.initialAttachments)
+      && this.config.initialAttachments.length > 0;
+    const messageContent: DesignMessageContent = includeInitialAttachments
+      ? [
+          ...(userText.length > 0 ? [{ type: 'text' as const, text: userText }] : []),
+          ...this.config.initialAttachments!.map((attachment) => ({
+            type: 'image' as const,
+            mimeType: attachment.mimeType,
+            data: attachment.data,
+          })),
+        ]
+      : userText;
+    if (includeInitialAttachments) {
+      this.initialAttachmentsUsed = true;
+    }
+    return this.collectStreamFromContent(system, messageContent);
   }
 
   private async runStructurePass(): Promise<void> {
@@ -370,6 +428,11 @@ export class DesignAgent {
       try {
         this.context.previewUrl = await this.config.startPreview('design/');
         this.config.onEvent({
+          type: 'preview_ready',
+          previewUrl: this.context.previewUrl,
+          timestamp: Date.now(),
+        });
+        this.config.onEvent({
           type: 'text_delta',
           content: `\n\n预览地址: ${this.context.previewUrl}\n`,
           timestamp: Date.now(),
@@ -385,12 +448,35 @@ export class DesignAgent {
   }
 
   private async runVisualCheckPass(): Promise<void> {
-    // P1 feature: visual self-check via screenshot → vision model
-    // Placeholder for now
-    this.config.onEvent({
-      type: 'text_delta',
-      content: '\n设计预览已生成。视觉自检功能将在后续版本中添加。\n',
-      timestamp: Date.now(),
-    });
+    if (!this.context.previewUrl || !this.config.capturePreviewScreenshot) {
+      this.config.onEvent({
+        type: 'text_delta',
+        content: '\n设计预览已生成。当前环境未启用视觉自检截图能力。\n',
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
+    try {
+      const screenshot = await this.config.capturePreviewScreenshot(this.context.previewUrl);
+      const visualContext = [
+        `用户需求：${this.context.userInput}`,
+        this.context.pageStructure
+          ? `页面结构：\n${JSON.stringify(this.context.pageStructure, null, 2)}`
+          : '',
+        `截图信息：${screenshot.width}x${screenshot.height}`,
+      ].filter(Boolean).join('\n\n');
+
+      await this.collectStreamFromContent(VISUAL_CHECK_PROMPT, [
+        { type: 'text', text: visualContext },
+        { type: 'image', mimeType: screenshot.mimeType, data: screenshot.data },
+      ]);
+    } catch (err) {
+      this.config.onEvent({
+        type: 'error',
+        errorMessage: `Visual self-check failed: ${err instanceof Error ? err.message : String(err)}`,
+        timestamp: Date.now(),
+      });
+    }
   }
 }

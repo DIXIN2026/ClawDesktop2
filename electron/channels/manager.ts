@@ -3,7 +3,7 @@
  * Manages lifecycle of all messaging channels (Feishu, QQ, etc.)
  */
 
-export type ChannelType = 'feishu' | 'feishu2' | 'qq' | 'web' | 'slack' | 'discord';
+export type ChannelType = 'feishu' | 'feishu2' | 'qq' | 'email' | 'web' | 'slack' | 'discord';
 export type ChannelStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'error';
 
 export interface IncomingMessage {

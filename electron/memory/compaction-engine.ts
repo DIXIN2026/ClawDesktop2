@@ -11,8 +11,10 @@ import {
   insertMemorySummary,
   insertMemoryChunk,
   getMemoryConfig,
+  upsertPreferenceObservation,
 } from './memory-store.js';
 import { estimateTokens } from './context-builder.js';
+import { extractPreferenceFacts } from './preference-extractor.js';
 import type { CompactionResult } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -156,6 +158,22 @@ export function indexConversationMessage(
     content: `[${role}]: ${content}`,
     tokenCount,
   });
+
+  if (role === 'user') {
+    try {
+      const facts = extractPreferenceFacts(content);
+      for (const fact of facts) {
+        upsertPreferenceObservation({
+          content: fact.content,
+          sessionId,
+          sourceChunkId: chunkId,
+          confidence: fact.confidence,
+        });
+      }
+    } catch (err) {
+      console.warn('[Memory] Preference extraction failed:', err instanceof Error ? err.message : String(err));
+    }
+  }
 
   return chunkId;
 }

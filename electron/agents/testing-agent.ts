@@ -52,10 +52,17 @@ export interface TestingAgentConfig {
   onStepChange: (step: TestingStep) => void;
   callLLM: (params: {
     system: string;
-    messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+    messages: Array<{
+      role: 'user' | 'assistant';
+      content: string | Array<
+        { type: 'text'; text: string } |
+        { type: 'image'; mimeType: string; data: string }
+      >;
+    }>;
   }) => AsyncIterable<string>;
   workDirectory: string;
   prdContent?: string;
+  initialAttachments?: Array<{ mimeType: string; data: string }>;
 }
 
 const REQUIREMENTS_CHECK_PROMPT = `你是一个 QA 专家。对照以下 PRD 文档，检查代码实现的完整性。
@@ -112,6 +119,7 @@ const SECURITY_PROMPT = `你是一个安全审计专家。扫描以下代码中�
 export class TestingAgent {
   private config: TestingAgentConfig;
   private aborted = false;
+  private initialAttachmentsUsed = false;
   private report: QualityReport;
 
   constructor(config: TestingAgentConfig) {
@@ -189,9 +197,25 @@ export class TestingAgent {
 
   private async collectStream(system: string, userContent: string): Promise<string> {
     let result = '';
+    const includeInitialAttachments = !this.initialAttachmentsUsed
+      && Array.isArray(this.config.initialAttachments)
+      && this.config.initialAttachments.length > 0;
+    const messageContent = includeInitialAttachments
+      ? [
+          ...(userContent.length > 0 ? [{ type: 'text' as const, text: userContent }] : []),
+          ...this.config.initialAttachments!.map((attachment) => ({
+            type: 'image' as const,
+            mimeType: attachment.mimeType,
+            data: attachment.data,
+          })),
+        ]
+      : userContent;
+    if (includeInitialAttachments) {
+      this.initialAttachmentsUsed = true;
+    }
     const stream = this.config.callLLM({
       system,
-      messages: [{ role: 'user', content: userContent }],
+      messages: [{ role: 'user', content: messageContent }],
     });
     for await (const chunk of stream) {
       if (this.aborted) break;

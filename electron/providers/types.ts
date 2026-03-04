@@ -53,11 +53,15 @@ export interface CliAgentBackend {
 }
 
 export interface CodingAgentEvent {
-  type: 'text_delta' | 'tool_start' | 'tool_output' | 'tool_end' | 'file_changed' | 'approval_req' | 'turn_end' | 'error';
+  type: 'text_delta' | 'tool_start' | 'tool_output' | 'tool_end' | 'file_changed' | 'approval_req' | 'clarification_req' | 'preview_ready' | 'turn_end' | 'error';
   content?: string;
   toolName?: string;
   toolInput?: Record<string, unknown>;
   filePath?: string;
+  previewUrl?: string;
+  clarificationId?: string;
+  questions?: string[];
+  clarificationExpiresAt?: number;
   diffContent?: string;
   errorMessage?: string;
   timestamp: number;

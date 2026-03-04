@@ -29,8 +29,15 @@ export interface RequirementsAgentConfig {
   onClarificationNeeded: (questions: string[]) => Promise<Record<string, string>>;
   callLLM: (params: {
     system: string;
-    messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+    messages: Array<{
+      role: 'user' | 'assistant';
+      content: string | Array<
+        { type: 'text'; text: string } |
+        { type: 'image'; mimeType: string; data: string }
+      >;
+    }>;
   }) => AsyncIterable<string>;
+  initialAttachments?: Array<{ mimeType: string; data: string }>;
 }
 
 const STEP_PROMPTS: Record<RequirementsStep, string> = {
@@ -88,6 +95,7 @@ export class RequirementsAgent {
   private context: RequirementsContext;
   private config: RequirementsAgentConfig;
   private aborted = false;
+  private initialAttachmentsUsed = false;
 
   constructor(userInput: string, config: RequirementsAgentConfig) {
     this.context = {
@@ -160,9 +168,25 @@ export class RequirementsAgent {
 
   private async collectStream(system: string, userContent: string): Promise<string> {
     let result = '';
+    const includeInitialAttachments = !this.initialAttachmentsUsed
+      && Array.isArray(this.config.initialAttachments)
+      && this.config.initialAttachments.length > 0;
+    const messageContent = includeInitialAttachments
+      ? [
+          ...(userContent.length > 0 ? [{ type: 'text' as const, text: userContent }] : []),
+          ...this.config.initialAttachments!.map((attachment) => ({
+            type: 'image' as const,
+            mimeType: attachment.mimeType,
+            data: attachment.data,
+          })),
+        ]
+      : userContent;
+    if (includeInitialAttachments) {
+      this.initialAttachmentsUsed = true;
+    }
     const stream = this.config.callLLM({
       system,
-      messages: [{ role: 'user', content: userContent }],
+      messages: [{ role: 'user', content: messageContent }],
     });
     for await (const chunk of stream) {
       if (this.aborted) break;

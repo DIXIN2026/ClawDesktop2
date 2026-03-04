@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+dist-electron/
+out/
+build/
+*.tsbuildinfo
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Electron
+electron-builder-cache/
+
+# Claude
+.claude/
+
+# Misc
+.cache/
+.temp/
+tmp/
+*.tgz
+*.tar.gz
+
+# Project specific
+.clawdesktop2-data/
+.clawdesktop2-session/
+release/

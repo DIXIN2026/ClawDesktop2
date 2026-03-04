@@ -7,7 +7,9 @@ import { ipcMain, dialog, shell, app } from 'electron';
 import type { BrowserWindow } from 'electron';
 import { randomUUID } from 'crypto';
 import { mkdirSync, existsSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { isIP } from 'node:net';
+import { lookup } from 'node:dns/promises';
+import { join, resolve, sep } from 'node:path';
 import {
   getSetting,
   setSetting,
@@ -51,6 +53,8 @@ import { storeApiKey, getApiKey, deleteApiKey, hasApiKey } from '../security/cre
 import { searchClawHub, downloadSkillManifest } from '../skills/clawhub.js';
 import { WEB_SEARCH_TOOL } from '../skills/builtin/web-search.js';
 import { SkillRegistry } from '../skills/registry.js';
+import type { SkillManifest, SkillTool, SkillToolParameter } from '../skills/loader.js';
+import { generateSkillDraft } from '../skills/generator.js';
 import { scanSource } from '../security/skill-scanner.js';
 import { getChannelManager } from '../channels/manager.js';
 import { parseTasksFromPRD, parseBugsFromTestReport, createBoardIssuesFromTasks } from '../agents/board-integration.js';
@@ -68,6 +72,8 @@ import {
   deleteSessionMemory,
   getChunksWithoutEmbeddings,
   updateChunkEmbedding,
+  listPreferenceObservations,
+  deletePreferenceObservation,
 } from '../memory/index.js';
 import { createEmbeddingAdapter, embeddingToBuffer } from '../memory/embedding-adapter.js';
 import type { SearchOptions } from '../memory/types.js';
@@ -93,6 +99,7 @@ import { validateIpcArgs } from '../security/ipc-validators.js';
 import { withRateLimit } from '../security/rate-limiter.js';
 import { addToAllowlist, removeFromAllowlist, getAllowlist } from '../engine/mount-security.js';
 import { registerOrUpdateChannel } from '../channels/registration.js';
+import { isConfigurableChannelId, sanitizeChannelConfigForStorage } from '../channels/secure-config.js';
 
 // ---------------------------------------------------------------------------
 // Module-level singletons
@@ -101,11 +108,12 @@ import { registerOrUpdateChannel } from '../channels/registration.js';
 const registry = new ProviderRegistry();
 const agentExecutor = createAgentExecutor();
 const skillRegistry = new SkillRegistry();
-skillRegistry.loadFromDatabase();
+let skillsLoaded = false;
 
 const BUILTIN_SKILL_HANDLERS: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
   [WEB_SEARCH_TOOL.name]: WEB_SEARCH_TOOL.handler,
 };
+let channelStatusUnsubscribe: (() => void) | null = null;
 
 // ---------------------------------------------------------------------------
 // Response envelope
@@ -146,10 +154,211 @@ function wrapHandler<T>(
 }
 
 // ---------------------------------------------------------------------------
+// Skill security helpers
+// ---------------------------------------------------------------------------
+
+const SKILL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+const SKILL_ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
+
+function assertValidSkillId(skillId: string): string {
+  if (!SKILL_ID_PATTERN.test(skillId)) {
+    throw new Error(`Invalid skill id: ${skillId}`);
+  }
+  return skillId;
+}
+
+function getSkillRootPath(): string {
+  return resolve(app.getPath('userData'), 'skills');
+}
+
+function resolveSkillPath(skillId: string): string {
+  const safeSkillId = assertValidSkillId(skillId);
+  const root = getSkillRootPath();
+  const target = resolve(root, safeSkillId);
+  if (!(target === root || target.startsWith(`${root}${sep}`))) {
+    throw new Error(`Invalid skill path for ${skillId}`);
+  }
+  return target;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Expected object');
+  }
+  return value as Record<string, unknown>;
+}
+
+function normalizeGeneratedSkillManifest(input: unknown): SkillManifest {
+  const manifestRaw = asRecord(input);
+  const id = assertValidSkillId(String(manifestRaw.id ?? '').trim());
+  const name = String(manifestRaw.name ?? '').trim();
+  const description = String(manifestRaw.description ?? '').trim();
+  const version = String(manifestRaw.version ?? '0.1.0').trim() || '0.1.0';
+  const author = String(manifestRaw.author ?? 'AI Generated').trim() || 'AI Generated';
+  const category = String(manifestRaw.category ?? 'utility').trim().toLowerCase();
+  const rawTools = manifestRaw.tools;
+
+  if (!name) throw new Error('Skill manifest name is required');
+  if (!description) throw new Error('Skill manifest description is required');
+  if (!['code', 'design', 'test', 'utility'].includes(category)) {
+    throw new Error(`Invalid skill category: ${category}`);
+  }
+  if (!Array.isArray(rawTools) || rawTools.length === 0) {
+    throw new Error('Skill manifest requires at least one tool');
+  }
+
+  const tools: SkillTool[] = rawTools.slice(0, 8).map((item) => {
+    const toolRaw = asRecord(item);
+    const toolName = String(toolRaw.name ?? '').trim();
+    if (!toolName) throw new Error('Skill tool name is required');
+    const toolDescription = String(toolRaw.description ?? '').trim();
+    const paramsRaw = toolRaw.parameters;
+    const parameters: Record<string, SkillToolParameter> = {};
+
+    if (paramsRaw && typeof paramsRaw === 'object' && !Array.isArray(paramsRaw)) {
+      for (const [key, value] of Object.entries(paramsRaw as Record<string, unknown>)) {
+        const paramRaw = asRecord(value);
+        parameters[key] = {
+          type: String(paramRaw.type ?? 'string'),
+          description: String(paramRaw.description ?? ''),
+          required: paramRaw.required === true ? true : undefined,
+        };
+      }
+    }
+
+    const endpointRaw = typeof toolRaw.endpoint === 'string' ? toolRaw.endpoint.trim() : '';
+    const methodRaw = typeof toolRaw.method === 'string' ? toolRaw.method.toUpperCase() : '';
+    const timeoutMs = typeof toolRaw.timeoutMs === 'number' && Number.isFinite(toolRaw.timeoutMs)
+      ? Math.max(1000, Math.floor(toolRaw.timeoutMs))
+      : undefined;
+    const headersRaw = toolRaw.headers;
+    const headers: Record<string, string> = {};
+    if (headersRaw && typeof headersRaw === 'object' && !Array.isArray(headersRaw)) {
+      for (const [k, v] of Object.entries(headersRaw as Record<string, unknown>)) {
+        if (typeof v === 'string' && k.trim()) {
+          headers[k] = v;
+        }
+      }
+    }
+
+    const tool: SkillTool = {
+      name: toolName,
+      description: toolDescription,
+      parameters,
+    };
+    if (endpointRaw) {
+      tool.endpoint = endpointRaw;
+    }
+    if (methodRaw === 'GET' || methodRaw === 'POST' || methodRaw === 'PUT' || methodRaw === 'PATCH' || methodRaw === 'DELETE') {
+      tool.method = methodRaw;
+    }
+    if (Object.keys(headers).length > 0) {
+      tool.headers = headers;
+    }
+    if (timeoutMs) {
+      tool.timeoutMs = timeoutMs;
+    }
+    return tool;
+  });
+
+  return {
+    id,
+    name,
+    version,
+    description,
+    author,
+    category,
+    tools,
+    promptFile: 'SKILL.md',
+  };
+}
+
+function isPrivateOrRestrictedIp(hostname: string): boolean {
+  const version = isIP(hostname);
+  if (version === 4) {
+    const parts = hostname.split('.').map((p) => Number.parseInt(p, 10));
+    if (parts.length !== 4 || parts.some((p) => Number.isNaN(p))) return true;
+    const [a, b] = parts;
+    if (a === 10 || a === 127 || a === 0) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    return false;
+  }
+  if (version === 6) {
+    const h = hostname.toLowerCase();
+    if (h === '::1' || h === '::') return true;
+    if (h.startsWith('::ffff:')) {
+      const mappedV4 = h.slice('::ffff:'.length);
+      if (isIP(mappedV4) === 4) {
+        return isPrivateOrRestrictedIp(mappedV4);
+      }
+    }
+    if (h.startsWith('fc') || h.startsWith('fd')) return true;
+    if (h.startsWith('fe80')) return true;
+    return false;
+  }
+  return false;
+}
+
+async function assertSkillHostnameResolvesPublic(hostname: string): Promise<void> {
+  if (isIP(hostname) !== 0) return;
+  let records: Array<{ address: string; family: number }>;
+  try {
+    records = await lookup(hostname, { all: true, verbatim: true }) as Array<{ address: string; family: number }>;
+  } catch {
+    throw new Error(`Failed to resolve skill endpoint host: ${hostname}`);
+  }
+
+  if (!Array.isArray(records) || records.length === 0) {
+    throw new Error(`Skill endpoint host has no DNS records: ${hostname}`);
+  }
+
+  for (const record of records) {
+    if (isPrivateOrRestrictedIp(record.address)) {
+      throw new Error(`Blocked private skill endpoint host (DNS): ${hostname} -> ${record.address}`);
+    }
+  }
+}
+
+async function validateSkillEndpoint(endpoint: string): Promise<string> {
+  let parsed: URL;
+  try {
+    parsed = new URL(endpoint);
+  } catch {
+    throw new Error(`Invalid skill endpoint URL: ${endpoint}`);
+  }
+
+  if (!SKILL_ALLOWED_PROTOCOLS.has(parsed.protocol)) {
+    throw new Error(`Blocked skill endpoint protocol: ${parsed.protocol}`);
+  }
+
+  const hostname = parsed.hostname.trim().toLowerCase();
+  if (!hostname) {
+    throw new Error(`Invalid skill endpoint host: ${endpoint}`);
+  }
+  if (hostname === 'localhost' || hostname.endsWith('.local')) {
+    throw new Error(`Blocked local skill endpoint host: ${hostname}`);
+  }
+  if (isPrivateOrRestrictedIp(hostname)) {
+    throw new Error(`Blocked private skill endpoint host: ${hostname}`);
+  }
+  await assertSkillHostnameResolvesPublic(hostname);
+
+  return parsed.toString();
+}
+
+// ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
+  if (!skillsLoaded) {
+    skillRegistry.loadFromDatabase();
+    skillsLoaded = true;
+  }
+
   // Restore persisted agent default model mappings into runtime router.
   for (const mapping of getAgentModelMappings()) {
     if (mapping.agent_type && mapping.provider_id && mapping.model_id) {
@@ -161,6 +370,17 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   }
 
+  if (!channelStatusUnsubscribe) {
+    channelStatusUnsubscribe = getChannelManager().onStatusChange((channelId, status) => {
+      if (mainWindow.isDestroyed()) return;
+      mainWindow.webContents.send('channels:status', {
+        channelId,
+        status,
+        timestamp: Date.now(),
+      });
+    });
+  }
+
   // --- Engine ---
   ipcMain.handle('engine:status', wrapHandler(() => {
     const runtime = detectRuntime();
@@ -169,7 +389,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       containerRuntime: runtime.available ? runtime.type : 'none',
       containerVersion: runtime.version,
     };
-  }));
+  }, 'engine:status'));
 
   // --- Settings ---
   ipcMain.handle('settings:get', wrapHandler((...args: unknown[]) => {
@@ -187,26 +407,26 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // --- Mount allowlist ---
   ipcMain.handle('mount:allowlist:list', wrapHandler(() => {
     return getAllowlist();
-  }));
+  }, 'mount:allowlist:list'));
 
   ipcMain.handle('mount:allowlist:add', wrapHandler((...args: unknown[]) => {
     const path = args[1] as string;
     if (!path?.trim()) throw new Error('path is required');
     addToAllowlist(path.trim());
     return true;
-  }));
+  }, 'mount:allowlist:add'));
 
   ipcMain.handle('mount:allowlist:remove', wrapHandler((...args: unknown[]) => {
     const path = args[1] as string;
     if (!path?.trim()) throw new Error('path is required');
     removeFromAllowlist(path.trim());
     return true;
-  }));
+  }, 'mount:allowlist:remove'));
 
   // --- Window (wrapped for error safety) ---
   ipcMain.handle('window:minimize', wrapHandler(() => {
     mainWindow.minimize();
-  }));
+  }, 'window:minimize'));
 
   ipcMain.handle('window:maximize', wrapHandler(() => {
     if (mainWindow.isMaximized()) {
@@ -214,15 +434,15 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     } else {
       mainWindow.maximize();
     }
-  }));
+  }, 'window:maximize'));
 
   ipcMain.handle('window:close', wrapHandler(() => {
     mainWindow.close();
-  }));
+  }, 'window:close'));
 
   ipcMain.handle('window:isMaximized', wrapHandler(() => {
     return mainWindow.isMaximized();
-  }));
+  }, 'window:isMaximized'));
 
   // --- App ---
   ipcMain.handle('app:version', () => app.getVersion());
@@ -283,7 +503,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle('providers:list', wrapHandler(() => {
     return registry.getAll();
-  }));
+  }, 'providers:list'));
 
   ipcMain.handle('providers:discover', wrapHandler(async () => {
     const result = await runDiscovery();
@@ -315,7 +535,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle('providers:get', wrapHandler((...args: unknown[]) => {
     const id = args[1] as string;
     return registry.getById(id) ?? null;
-  }));
+  }, 'providers:get'));
 
   ipcMain.handle('providers:save', wrapHandler((...args: unknown[]) => {
     // Frontend sends the full config object as args[1]
@@ -328,12 +548,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       registry.add(config);
     }
     return true;
-  }));
+  }, 'providers:save'));
 
   ipcMain.handle('providers:delete', wrapHandler((...args: unknown[]) => {
     const id = args[1] as string;
     return registry.remove(id);
-  }));
+  }, 'providers:delete'));
 
   ipcMain.handle('providers:setApiKey', wrapHandler(async (...args: unknown[]) => {
     const providerId = args[1] as string;
@@ -341,19 +561,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     await storeApiKey(providerId, apiKey);
     registry.markAvailable(providerId, 'manual');
     return true;
-  }));
+  }, 'providers:setApiKey'));
 
   ipcMain.handle('providers:deleteApiKey', wrapHandler(async (...args: unknown[]) => {
     const providerId = args[1] as string;
     await deleteApiKey(providerId);
     registry.update(providerId, { status: 'unconfigured' });
     return true;
-  }));
+  }, 'providers:deleteApiKey'));
 
   ipcMain.handle('providers:hasApiKey', wrapHandler(async (...args: unknown[]) => {
     const providerId = args[1] as string;
     return hasApiKey(providerId);
-  }));
+  }, 'providers:hasApiKey'));
 
   // providers:getApiKey removed — API keys must never be sent to the renderer process.
   // Use providers:hasApiKey instead. For display, we provide a masked version.
@@ -363,7 +583,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     if (!key) return null;
     // Return only the last 4 chars, masked
     return key.length > 4 ? `${'*'.repeat(key.length - 4)}${key.slice(-4)}` : '****';
-  }));
+  }, 'providers:getApiKeyMasked'));
 
   ipcMain.handle('providers:setDefault', wrapHandler((...args: unknown[]) => {
     const agentType = args[1] as 'coding' | 'requirements' | 'design' | 'testing';
@@ -377,7 +597,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       modelId,
     });
     return true;
-  }));
+  }, 'providers:setDefault'));
 
   ipcMain.handle('providers:configure', wrapHandler((...args: unknown[]) => {
     const id = args[1] as string;
@@ -408,7 +628,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
 
     return provider.models;
-  }));
+  }, 'providers:models'));
 
   ipcMain.handle('providers:health', wrapHandler(async (...args: unknown[]) => {
     const providerId = args[1] as string;
@@ -432,7 +652,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle('providers:cli-status', wrapHandler(async () => {
     const result = await runDiscovery();
     return result.cliAgents;
-  }));
+  }, 'providers:cli-status'));
 
   // =========================================================================
   // Sessions
@@ -449,7 +669,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       createdAt: s.created_at,
       updatedAt: s.updated_at,
     }));
-  }));
+  }, 'sessions:list'));
 
   ipcMain.handle('sessions:create', wrapHandler((...args: unknown[]) => {
     const params = args[1] as {
@@ -469,7 +689,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       currentModel: params?.currentModel,
     });
     return { sessionId };
-  }));
+  }, 'sessions:create'));
 
   ipcMain.handle('sessions:get', wrapHandler((...args: unknown[]) => {
     const id = args[1] as string;
@@ -485,13 +705,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       createdAt: session.created_at,
       updatedAt: session.updated_at,
     };
-  }));
+  }, 'sessions:get'));
 
   ipcMain.handle('sessions:delete', wrapHandler((...args: unknown[]) => {
     const id = args[1] as string;
     deleteChatSession(id);
     return true;
-  }));
+  }, 'sessions:delete'));
 
   ipcMain.handle('sessions:resume', wrapHandler((...args: unknown[]) => {
     const sessionId = args[1] as string;
@@ -500,7 +720,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     const session = getChatSession(sessionId);
     if (!session) throw new Error(`Session ${sessionId} not found`);
     return { sessionId: session.id };
-  }));
+  }, 'sessions:resume'));
 
   // =========================================================================
   // Chat
@@ -516,7 +736,23 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       modelId?: string;
       agentType?: 'coding' | 'requirements' | 'design' | 'testing';
       workDirectory?: string;
+      attachments?: Array<{
+        type: 'image';
+        mimeType: string;
+        data: string;
+        name?: string;
+        size?: number;
+      }>;
     } | undefined;
+    const attachments = (options?.attachments ?? [])
+      .filter((item) =>
+        item?.type === 'image'
+        && typeof item.mimeType === 'string'
+        && item.mimeType.startsWith('image/')
+        && typeof item.data === 'string'
+        && item.data.length > 0,
+      )
+      .slice(0, 4);
 
     // 1. Persist the user message
     const messageId = randomUUID();
@@ -525,6 +761,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       sessionId,
       role: 'user',
       content,
+      attachments: attachments.length > 0 ? JSON.stringify(attachments) : undefined,
     });
 
     // 2. Resolve session context
@@ -551,6 +788,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
 
     let mode: 'cli' | 'api' = options?.mode ?? ((providerId && modelId) ? 'api' : 'cli');
+    if (attachments.length > 0 && mode !== 'api') {
+      throw new Error('Image attachments require API mode. Please select an API model first.');
+    }
     if (agentType !== 'coding') {
       if (providerId && modelId) {
         mode = 'api';
@@ -656,6 +896,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
           const timeoutMs = typeof tool?.timeoutMs === 'number' ? Math.max(1000, tool.timeoutMs) : 20_000;
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+          const validatedEndpoint = await validateSkillEndpoint(endpoint);
 
           const headers: Record<string, string> = {
             ...((tool?.headers as Record<string, string> | undefined) ?? {}),
@@ -666,14 +907,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
           const url = method === 'GET'
             ? (() => {
-                const parsed = new URL(endpoint);
+                const parsed = new URL(validatedEndpoint);
                 for (const [k, v] of Object.entries(toolInput)) {
                   if (v == null) continue;
                   parsed.searchParams.set(k, String(v));
                 }
                 return parsed.toString();
               })()
-            : endpoint;
+            : validatedEndpoint;
 
           const response = await fetch(url, {
             method,
@@ -738,6 +979,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     let apiKey: string | undefined;
     let baseUrl: string | undefined;
     let apiProtocol: AgentExecuteOptions['apiProtocol'];
+    let embeddingAdapter: AgentExecuteOptions['embeddingAdapter'] = null;
 
     if (mode === 'api' && providerId) {
       const provider = registry.getById(providerId);
@@ -748,6 +990,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         if (!modelId && provider.models.length > 0) {
           modelId = provider.models[0]?.id;
         }
+        if (attachments.length > 0 && apiProtocol === 'ollama') {
+          throw new Error('Current Ollama API flow does not support image attachments. Please switch model provider.');
+        }
+        embeddingAdapter = createEmbeddingAdapter(provider, apiKey ?? null);
       }
     }
 
@@ -767,6 +1013,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       apiKey,
       baseUrl,
       apiProtocol,
+      attachments,
+      embeddingAdapter,
       onEvent: (event) => {
         // Accumulate text for persistence
         if (event.type === 'text_delta' && event.content) {
@@ -848,7 +1096,27 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     const sessionId = args[1] as string;
     await agentExecutor.abort(sessionId);
     return true;
-  }));
+  }, 'chat:abort'));
+
+  ipcMain.handle('chat:clarification-response', wrapHandler((...args: unknown[]) => {
+    const params = args[1] as {
+      clarificationId: string;
+      answers?: Record<string, string>;
+      sessionId?: string;
+    } | undefined;
+    if (!params?.clarificationId) {
+      throw new Error('clarificationId is required');
+    }
+    const ok = agentExecutor.respondClarification(
+      params.clarificationId,
+      params.answers ?? {},
+      params.sessionId,
+    );
+    if (!ok) {
+      throw new Error('Clarification request not found, expired, or session mismatch');
+    }
+    return true;
+  }, 'chat:clarification-response'));
 
   ipcMain.handle('chat:history', wrapHandler((...args: unknown[]) => {
     const sessionId = args[1] as string;
@@ -858,9 +1126,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       role: m.role,
       content: m.content,
       modelUsed: m.model_used,
+      attachments: m.attachments,
       createdAt: m.created_at,
     }));
-  }));
+  }, 'chat:history'));
 
   ipcMain.handle('chat:switch-model', wrapHandler((...args: unknown[]) => {
     const sessionId = args[1] as string;
@@ -868,7 +1137,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     const modelId = args[3] as string;
     updateChatSession(sessionId, { current_model: `${providerId}/${modelId}` });
     return true;
-  }));
+  }, 'chat:switch-model'));
 
   // =========================================================================
   // Agents
@@ -876,12 +1145,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle('agents:list', wrapHandler(() => {
     return getAgents();
-  }));
+  }, 'agents:list'));
 
   ipcMain.handle('agents:get', wrapHandler((...args: unknown[]) => {
     const id = args[1] as string;
     return getAgent(id) ?? null;
-  }));
+  }, 'agents:get'));
 
   ipcMain.handle('agents:update', wrapHandler((...args: unknown[]) => {
     const id = args[1] as string;
@@ -910,7 +1179,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       containerConfig: agent.container_config,
       status: agent.status,
     };
-  }));
+  }, 'agents:config'));
 
   ipcMain.handle('agents:set-model', wrapHandler((...args: unknown[]) => {
     const agentType = args[1] as string;
@@ -930,7 +1199,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       modelId,
     });
     return true;
-  }));
+  }, 'agents:set-model'));
 
   // =========================================================================
   // Git
@@ -939,104 +1208,114 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Helper: resolve workDir from args or fallback to cwd
   function resolveWorkDir(args: unknown[], idx = 1): string {
     const val = args[idx];
-    return (typeof val === 'string' && val.length > 0) ? val : process.cwd();
+    return (typeof val === 'string' && val.trim().length > 0) ? val : process.cwd();
   }
 
   ipcMain.handle('git:status', wrapHandler((...args: unknown[]) => {
     return getGitStatus(resolveWorkDir(args));
-  }));
+  }, 'git:status'));
 
   ipcMain.handle('git:diff', wrapHandler((...args: unknown[]) => {
     const arg = args[1];
+    const workDir = resolveWorkDir(args, 2);
     if (typeof arg === 'string' && arg.length > 0) {
-      return getGitFileDiff(process.cwd(), arg, false);
+      return getGitFileDiff(workDir, arg, false);
     }
     const staged = typeof arg === 'boolean' ? arg : false;
-    const result = getGitDiff(process.cwd(), staged);
+    const result = getGitDiff(workDir, staged);
     return result.files.map((f) => f.diff).filter(Boolean).join('\n');
-  }));
+  }, 'git:diff'));
 
   ipcMain.handle('git:commit', wrapHandler((...args: unknown[]) => {
     const message = args[1] as string;
+    const workDir = resolveWorkDir(args, 2);
     if (!message || typeof message !== 'string') {
       throw new Error('Commit message is required');
     }
-    const commitHash = gitCommit(process.cwd(), message);
+    const commitHash = gitCommit(workDir, message);
     return { commitHash };
-  }));
+  }, 'git:commit'));
 
-  ipcMain.handle('git:push', wrapHandler(() => {
+  ipcMain.handle('git:push', wrapHandler((...args: unknown[]) => {
+    const workDir = resolveWorkDir(args);
     const { waitForApproval } = createApprovalRequest(
       'git-push',
       'git-push',
-      'Git push to remote repository',
-      'git push',
+      `Git push to remote repository (${workDir})`,
+      `git -C ${workDir} push`,
     );
     return waitForApproval.then((approved) => {
       if (!approved) {
         throw new Error('Git push denied by user');
       }
-      gitPush(process.cwd());
+      gitPush(workDir);
       return true;
     });
-  }));
+  }, 'git:push'));
 
   ipcMain.handle('git:stage', wrapHandler((...args: unknown[]) => {
     const files = args[1] as string[];
+    const workDir = resolveWorkDir(args, 2);
     if (!Array.isArray(files)) throw new Error('files must be an array');
-    gitStage(process.cwd(), files);
+    gitStage(workDir, files);
     return true;
-  }));
+  }, 'git:stage'));
 
   ipcMain.handle('git:unstage', wrapHandler((...args: unknown[]) => {
     const files = args[1] as string[];
+    const workDir = resolveWorkDir(args, 2);
     if (!Array.isArray(files)) throw new Error('files must be an array');
-    gitUnstage(process.cwd(), files);
+    gitUnstage(workDir, files);
     return true;
-  }));
+  }, 'git:unstage'));
 
   ipcMain.handle('git:revert', wrapHandler((...args: unknown[]) => {
     const files = args[1] as string[];
+    const workDir = resolveWorkDir(args, 2);
     if (!Array.isArray(files)) throw new Error('files must be an array');
-    gitRevert(process.cwd(), files);
+    gitRevert(workDir, files);
     return true;
-  }));
+  }, 'git:revert'));
 
-  ipcMain.handle('git:snapshot', wrapHandler(() => {
-    return createSnapshot(process.cwd());
-  }));
+  ipcMain.handle('git:snapshot', wrapHandler((...args: unknown[]) => {
+    return createSnapshot(resolveWorkDir(args));
+  }, 'git:snapshot'));
 
   ipcMain.handle('git:undo', wrapHandler((...args: unknown[]) => {
     const snapshotRef = args[1] as string | undefined;
+    const workDir = resolveWorkDir(args, 2);
     // If no snapshot ref provided, undo to previous commit (HEAD~1)
     const ref = snapshotRef && typeof snapshotRef === 'string' ? snapshotRef : 'HEAD~1';
-    undoToSnapshot(process.cwd(), ref);
+    undoToSnapshot(workDir, ref);
     return true;
-  }));
+  }, 'git:undo'));
 
-  ipcMain.handle('git:redo', wrapHandler(() => {
-    redoFromUndo(process.cwd());
+  ipcMain.handle('git:redo', wrapHandler((...args: unknown[]) => {
+    const workDir = resolveWorkDir(args);
+    redoFromUndo(workDir);
     return true;
-  }));
+  }, 'git:redo'));
 
-  ipcMain.handle('git:worktree-list', wrapHandler(() => {
-    return listWorktrees(process.cwd());
-  }));
+  ipcMain.handle('git:worktree-list', wrapHandler((...args: unknown[]) => {
+    return listWorktrees(resolveWorkDir(args));
+  }, 'git:worktree-list'));
 
   ipcMain.handle('git:worktree-create', wrapHandler((...args: unknown[]) => {
     const branch = args[1] as string;
     const path = args[2] as string;
+    const workDir = resolveWorkDir(args, 3);
     if (!branch || !path) throw new Error('branch and path are required');
-    const resultPath = createWorktree(process.cwd(), branch, path);
+    const resultPath = createWorktree(workDir, branch, path);
     return { path: resultPath };
   }, 'git:worktree-create'));
 
   ipcMain.handle('git:worktree-remove', wrapHandler((...args: unknown[]) => {
     const path = args[1] as string;
+    const workDir = resolveWorkDir(args, 2);
     if (!path) throw new Error('Worktree path is required');
-    removeWorktree(process.cwd(), path);
+    removeWorktree(workDir, path);
     return true;
-  }));
+  }, 'git:worktree-remove'));
 
   // =========================================================================
   // Tasks
@@ -1044,7 +1323,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle('tasks:list', wrapHandler(() => {
     return getTasks();
-  }));
+  }, 'tasks:list'));
 
   ipcMain.handle('tasks:create', wrapHandler((...args: unknown[]) => {
     const params = args[1] as {
@@ -1084,7 +1363,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     const id = args[1] as string;
     deleteTask(id);
     return true;
-  }));
+  }, 'tasks:delete'));
 
   ipcMain.handle('tasks:start', wrapHandler((...args: unknown[]) => {
     const params = args[1] as {
@@ -1129,7 +1408,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle('schedule:list', wrapHandler(() => {
     return getScheduledTasks();
-  }));
+  }, 'schedule:list'));
 
   ipcMain.handle('schedule:create', wrapHandler((...args: unknown[]) => {
     const params = args[1] as {
@@ -1155,25 +1434,25 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       nextRun: params?.nextRun,
     });
     return { id };
-  }));
+  }, 'schedule:create'));
 
   ipcMain.handle('schedule:toggle', wrapHandler((...args: unknown[]) => {
     const id = args[1] as string;
     const enabled = args[2] as boolean;
     updateScheduledTask(id, { enabled: enabled ? 1 : 0 });
     return true;
-  }));
+  }, 'schedule:toggle'));
 
   ipcMain.handle('schedule:delete', wrapHandler((...args: unknown[]) => {
     const id = args[1] as string;
     deleteScheduledTask(id);
     return true;
-  }));
+  }, 'schedule:delete'));
 
   ipcMain.handle('schedule:logs', wrapHandler((...args: unknown[]) => {
     const taskId = args[1] as string;
     return getTaskRunLogs(taskId);
-  }));
+  }, 'schedule:logs'));
 
   // =========================================================================
   // Skills
@@ -1185,8 +1464,125 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return searchClawHub(query);
   }, 'skills:search'));
 
+  ipcMain.handle('skills:generate', wrapHandler(async (...args: unknown[]) => {
+    const params = args[1] as {
+      requirement: string;
+      providerId?: string;
+      modelId?: string;
+    } | undefined;
+    const requirement = params?.requirement?.trim();
+    if (!requirement) {
+      throw new Error('requirement is required');
+    }
+
+    const requestedProviderId = params?.providerId?.trim();
+    const provider = requestedProviderId
+      ? registry.getById(requestedProviderId)
+      : registry.getAll().find((item) =>
+          item.models.length > 0
+          && (item.status === 'available' || item.apiProtocol === 'ollama'),
+        );
+    if (!provider) {
+      throw new Error(
+        requestedProviderId
+          ? `Provider not found: ${requestedProviderId}`
+          : 'No available provider for skill generation',
+      );
+    }
+
+    const modelId = params?.modelId?.trim() || provider.models[0]?.id;
+    if (!modelId) {
+      throw new Error(`Provider "${provider.id}" has no available model`);
+    }
+    const apiKey = provider.apiProtocol === 'ollama'
+      ? null
+      : (await getApiKey(provider.id)) ?? null;
+
+    const draft = await generateSkillDraft({
+      requirement,
+      provider,
+      modelId,
+      apiKey,
+    });
+
+    const scanFindings = [
+      ...scanSource(
+        JSON.stringify(draft.manifest, null, 2),
+        `generated:${draft.manifest.id}:manifest.json`,
+      ),
+      ...scanSource(draft.skillPrompt, `generated:${draft.manifest.id}:SKILL.md`),
+    ];
+    const critical = scanFindings.filter((f) => f.severity === 'critical');
+    if (critical.length > 0) {
+      throw new Error(`Generated skill blocked by security scan (${critical.length} critical findings)`);
+    }
+
+    const warnings = [...draft.warnings];
+    if (draft.manifest.tools.every((tool) => !tool.endpoint)) {
+      warnings.push('Generated tools do not include endpoint; they are templates and may need manual implementation.');
+    }
+    const warnCount = scanFindings.filter((f) => f.severity === 'warn').length;
+    if (warnCount > 0) {
+      warnings.push(`Security scan detected ${warnCount} warning finding(s). Review before installing.`);
+    }
+
+    return {
+      manifest: draft.manifest,
+      skillPrompt: draft.skillPrompt,
+      warnings,
+      providerId: provider.id,
+      modelId,
+    };
+  }, 'skills:generate'));
+
+  ipcMain.handle('skills:install-generated', wrapHandler(async (...args: unknown[]) => {
+    const params = args[1] as {
+      manifest: unknown;
+      skillPrompt?: string;
+    } | undefined;
+    if (!params?.manifest) {
+      throw new Error('manifest is required');
+    }
+    let manifest = normalizeGeneratedSkillManifest(params.manifest);
+    const skillPrompt = (params.skillPrompt ?? '').trim();
+    if (!skillPrompt) {
+      throw new Error('skillPrompt is required');
+    }
+
+    // Apply endpoint validation to generated tools.
+    manifest = {
+      ...manifest,
+      tools: await Promise.all(manifest.tools.map(async (tool) => {
+        if (!tool.endpoint) return tool;
+        return {
+          ...tool,
+          endpoint: await validateSkillEndpoint(tool.endpoint),
+        };
+      })),
+    };
+
+    const findings = [
+      ...scanSource(
+        JSON.stringify(manifest, null, 2),
+        `generated:${manifest.id}:manifest.json`,
+      ),
+      ...scanSource(skillPrompt, `generated:${manifest.id}:SKILL.md`),
+    ];
+    const critical = findings.filter((f) => f.severity === 'critical');
+    if (critical.length > 0) {
+      throw new Error(`Skill install blocked by security scan (${critical.length} critical findings)`);
+    }
+
+    const skillDir = resolveSkillPath(manifest.id);
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
+    writeFileSync(join(skillDir, 'SKILL.md'), skillPrompt, 'utf-8');
+    skillRegistry.install(manifest, 'generated');
+    return { id: manifest.id };
+  }, 'skills:install-generated'));
+
   ipcMain.handle('skills:install', wrapHandler(async (...args: unknown[]) => {
-    const skillId = args[1] as string;
+    const skillId = assertValidSkillId(args[1] as string);
     if (!skillId) throw new Error('Skill ID is required');
 
     // Try to fetch manifest from ClawHub
@@ -1203,58 +1599,63 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       throw new Error(`Skill install blocked by security scan (${critical.length} critical findings)`);
     }
 
-    const skillDir = join(app.getPath('userData'), 'skills', skillId);
+    const skillDir = resolveSkillPath(skillId);
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(join(skillDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
 
     skillRegistry.install(manifest, 'clawhub');
     return true;
-  }));
+  }, 'skills:install'));
 
   ipcMain.handle('skills:uninstall', wrapHandler((...args: unknown[]) => {
-    const id = args[1] as string;
+    const id = assertValidSkillId(args[1] as string);
     skillRegistry.uninstall(id);
-    const skillDir = join(app.getPath('userData'), 'skills', id);
+    const skillDir = resolveSkillPath(id);
     if (existsSync(skillDir)) {
       rmSync(skillDir, { recursive: true, force: true });
     }
     return true;
-  }));
+  }, 'skills:uninstall'));
 
   ipcMain.handle('skills:list', wrapHandler(() => {
     return skillRegistry.getAll().map((manifest) => ({
       ...manifest,
       installed: true,
     }));
-  }));
+  }, 'skills:list'));
 
   ipcMain.handle('skills:scan', wrapHandler(async (...args: unknown[]) => {
     const dirPath = args[1] as string;
     if (!dirPath) throw new Error('Skill directory path is required');
     const { scanDirectoryWithSummary } = await import('../security/skill-scanner.js');
     return scanDirectoryWithSummary(dirPath);
-  }));
+  }, 'skills:scan'));
 
   // =========================================================================
   // Channels
   // =========================================================================
 
-  ipcMain.handle('channels:config', wrapHandler((...args: unknown[]) => {
+  ipcMain.handle('channels:config', wrapHandler(async (...args: unknown[]) => {
     // Frontend sends (channelType, config) as separate args
     const channelType = args[1] as string;
     const config = args[2] as Record<string, unknown> | undefined;
     if (!channelType) throw new Error('channelType is required');
+    let configToStore = config;
+    if (config && isConfigurableChannelId(channelType)) {
+      const result = await sanitizeChannelConfigForStorage(channelType, config);
+      configToStore = result.sanitizedConfig;
+    }
     setChannelState({
       id: channelType,
       channelType,
-      config: config ? JSON.stringify(config) : undefined,
+      config: configToStore ? JSON.stringify(configToStore) : undefined,
       status: 'configured',
     });
-    if (config) {
-      setSetting(`channel:${channelType}:config`, JSON.stringify(config));
+    if (configToStore) {
+      setSetting(`channel:${channelType}:config`, JSON.stringify(configToStore));
     }
-    if (channelType === 'qq' || channelType === 'feishu' || channelType === 'feishu2') {
-      registerOrUpdateChannel(channelType, config ?? undefined);
+    if (isConfigurableChannelId(channelType)) {
+      await registerOrUpdateChannel(channelType, configToStore ?? undefined);
     }
     return true;
   }, 'channels:config'));
@@ -1273,11 +1674,15 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
     try {
       await manager.start(channelType);
+      if (channelType === 'email') {
+        const testContent = `ClawDesktop test email\nTime: ${new Date().toISOString()}`;
+        await manager.sendMessage(channelType, 'email:test', testContent);
+      }
       return { connected: manager.getStatus(channelType) === 'connected' };
     } catch (err) {
       return { connected: false, error: err instanceof Error ? err.message : String(err) };
     }
-  }));
+  }, 'channels:test'));
 
   // =========================================================================
   // Approval
@@ -1289,17 +1694,17 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     const remember = args[3] as { pattern: string } | undefined;
     resolveApproval(approvalId, approved, remember);
     return true;
-  }));
+  }, 'approval:response'));
 
   ipcMain.handle('approval:mode:get', wrapHandler(() => {
     return getApprovalMode();
-  }));
+  }, 'approval:mode:get'));
 
   ipcMain.handle('approval:mode:set', wrapHandler((...args: unknown[]) => {
     const mode = args[1] as 'suggest' | 'auto-edit' | 'full-auto';
     setApprovalMode(mode);
     return true;
-  }));
+  }, 'approval:mode:set'));
 
   // =========================================================================
   // File / Directory
@@ -1312,7 +1717,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle('directory:select', wrapHandler(async () => {
     return dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
-  }));
+  }, 'directory:select'));
 
   // =========================================================================
   // Board (Kanban)
@@ -1320,21 +1725,21 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle('board:states', wrapHandler(() => {
     return getBoardStates();
-  }));
+  }, 'board:states'));
 
   ipcMain.handle('board:transitions', wrapHandler(() => {
     return getBoardTransitions();
-  }));
+  }, 'board:transitions'));
 
   ipcMain.handle('board:issues:list', wrapHandler((...args: unknown[]) => {
     const filters = args[1] as { stateId?: string; priority?: string; issueType?: string; parentId?: string } | undefined;
     return getBoardIssues(filters ?? undefined);
-  }));
+  }, 'board:issues:list'));
 
   ipcMain.handle('board:issues:get', wrapHandler((...args: unknown[]) => {
     const id = args[1] as string;
     return getBoardIssue(id) ?? null;
-  }));
+  }, 'board:issues:get'));
 
   ipcMain.handle('board:issues:create', wrapHandler((...args: unknown[]) => {
     const params = args[1] as {
@@ -1362,7 +1767,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     if (!id) throw new Error('Issue id is required');
     updateBoardIssue(id, updates);
     return true;
-  }));
+  }, 'board:issues:update'));
 
   ipcMain.handle('board:issues:move', wrapHandler((...args: unknown[]) => {
     const id = args[1] as string;
@@ -1371,14 +1776,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     if (!id || !targetStateId) throw new Error('id and targetStateId are required');
     moveBoardIssue(id, targetStateId, sortOrder);
     return true;
-  }));
+  }, 'board:issues:move'));
 
   ipcMain.handle('board:issues:delete', wrapHandler((...args: unknown[]) => {
     const id = args[1] as string;
     if (!id) throw new Error('Issue id is required');
     deleteBoardIssue(id);
     return true;
-  }));
+  }, 'board:issues:delete'));
 
   ipcMain.handle('board:issues:start', wrapHandler((...args: unknown[]) => {
     const params = args[1] as {
@@ -1414,7 +1819,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     });
 
     return { sessionId, branch, worktreePath };
-  }));
+  }, 'board:issues:start'));
 
   // =========================================================================
   // Channels (extended)
@@ -1443,18 +1848,18 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     });
 
     return { pipelineId: pipeline.id };
-  }));
+  }, 'orchestrator:execute'));
 
   ipcMain.handle('orchestrator:cancel', wrapHandler((...args: unknown[]) => {
     const pipelineId = args[1] as string;
     getOrchestrator().cancelPipeline(pipelineId);
     return true;
-  }));
+  }, 'orchestrator:cancel'));
 
   ipcMain.handle('orchestrator:status', wrapHandler((...args: unknown[]) => {
     const pipelineId = args[1] as string;
     return { running: getOrchestrator().isRunning(pipelineId) };
-  }));
+  }, 'orchestrator:status'));
 
   ipcMain.handle('channels:list', wrapHandler(() => {
     const manager = getChannelManager();
@@ -1463,15 +1868,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       id: ch.id,
       type: ch.type,
       status: ch.status,
-      configured: ch.id === 'qq'
-        ? Boolean((getChannelState('qq') as { config?: string | null } | undefined)?.config)
-        : ch.id === 'feishu'
-          ? Boolean((getChannelState('feishu') as { config?: string | null } | undefined)?.config)
-          : ch.id === 'feishu2'
-            ? Boolean((getChannelState('feishu2') as { config?: string | null } | undefined)?.config)
-            : false,
+      configured: Boolean((getChannelState(ch.id) as { config?: string | null } | undefined)?.config),
     }));
-  }));
+  }, 'channels:list'));
 
   ipcMain.handle('channels:start', wrapHandler(async (...args: unknown[]) => {
     const channelId = args[1] as string;
@@ -1513,11 +1912,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle('memory:stats', wrapHandler(() => {
     return getMemoryStats();
-  }));
+  }, 'memory:stats'));
+
+  ipcMain.handle('memory:preferences:list', wrapHandler((...args: unknown[]) => {
+    const options = args[1] as { sessionId?: string | null; limit?: number } | undefined;
+    return listPreferenceObservations({
+      sessionId: options?.sessionId ?? null,
+      limit: options?.limit,
+    });
+  }, 'memory:preferences:list'));
 
   ipcMain.handle('memory:config:get', wrapHandler(() => {
     return getMemoryConfig();
-  }));
+  }, 'memory:config:get'));
 
   ipcMain.handle('memory:config:set', wrapHandler((...args: unknown[]) => {
     const key = args[1] as string;
@@ -1540,6 +1947,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     deleteSessionMemory(sessionId);
     return true;
   }, 'memory:delete-session'));
+
+  ipcMain.handle('memory:preferences:delete', wrapHandler((...args: unknown[]) => {
+    const observationId = args[1] as string;
+    if (!observationId) throw new Error('observationId is required');
+    deletePreferenceObservation(observationId);
+    return true;
+  }, 'memory:preferences:delete'));
 
   ipcMain.handle('memory:reindex', wrapHandler(async () => {
     // Find chunks without embeddings and generate them
@@ -1572,6 +1986,6 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
 
     return { indexed };
-  }));
+  }, 'memory:reindex'));
 
 }

@@ -15,11 +15,21 @@ export interface ToolCallInfo {
   durationMs?: number;
 }
 
+export interface ChatAttachment {
+  type: 'image';
+  mimeType: string;
+  data: string;
+  name?: string;
+  size?: number;
+  url?: string;
+}
+
 export interface ChatMessage {
   id: string;
   sessionId: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
+  attachments?: ChatAttachment[];
   modelUsed?: string;
   toolCalls?: ToolCallInfo[];
   isStreaming?: boolean;
@@ -45,19 +55,29 @@ export interface ApprovalRequest {
   timestamp: number;
 }
 
+export interface ClarificationRequest {
+  id: string;
+  sessionId: string;
+  questions: string[];
+  timestamp: number;
+  expiresAt?: number;
+}
+
 interface ChatState {
   sessions: ChatSession[];
   currentSessionId: string | null;
   messages: ChatMessage[];
+  previewUrls: Record<string, string>;
   isStreaming: boolean;
   pendingApproval: ApprovalRequest | null;
+  pendingClarification: ClarificationRequest | null;
 
   // Actions
   loadSessions: () => Promise<void>;
   createSession: (title: string, agentType?: string, workDir?: string) => Promise<string>;
   selectSession: (sessionId: string) => Promise<void>;
   deleteSession: (sessionId: string) => Promise<void>;
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, attachments?: ChatAttachment[]) => Promise<void>;
   abortGeneration: () => Promise<void>;
   switchModel: (providerId: string, modelId: string) => Promise<void>;
   appendStreamDelta: (delta: string) => void;
@@ -65,6 +85,7 @@ interface ChatState {
   updateToolCall: (toolCallId: string, updates: Partial<ToolCallInfo>) => void;
   setApproval: (approval: ApprovalRequest | null) => void;
   respondToApproval: (approvalId: string, approved: boolean) => Promise<void>;
+  respondToClarification: (clarificationId: string, answers: Record<string, string>) => Promise<void>;
   setCurrentSessionAgent: (agentType: 'coding' | 'requirements' | 'design' | 'testing') => void;
 }
 
@@ -88,11 +109,37 @@ function normalizeSession(raw: Record<string, unknown>): ChatSession {
 }
 
 function normalizeMessage(raw: Record<string, unknown>): ChatMessage {
+  let attachments: ChatAttachment[] | undefined;
+  const rawAttachments = raw.attachments;
+  if (typeof rawAttachments === 'string' && rawAttachments.trim()) {
+    try {
+      const parsed = JSON.parse(rawAttachments) as unknown;
+      if (Array.isArray(parsed)) {
+        attachments = parsed.filter((item): item is ChatAttachment => {
+          if (!item || typeof item !== 'object') return false;
+          const record = item as Record<string, unknown>;
+          return record.type === 'image' && typeof record.mimeType === 'string'
+            && (typeof record.data === 'string' || typeof record.url === 'string');
+        });
+      }
+    } catch {
+      // keep undefined for malformed persisted data
+    }
+  } else if (Array.isArray(rawAttachments)) {
+    attachments = rawAttachments.filter((item): item is ChatAttachment => {
+      if (!item || typeof item !== 'object') return false;
+      const record = item as Record<string, unknown>;
+      return record.type === 'image' && typeof record.mimeType === 'string'
+        && (typeof record.data === 'string' || typeof record.url === 'string');
+    });
+  }
+
   return {
     id: String(raw.id ?? makeId()),
     sessionId: String(raw.session_id ?? raw.sessionId ?? ''),
     role: (raw.role as 'user' | 'assistant' | 'system') ?? 'assistant',
     content: String(raw.content ?? ''),
+    attachments,
     modelUsed: (raw.model_used as string | null) ?? (raw.modelUsed as string | undefined) ?? undefined,
     createdAt: String(raw.created_at ?? raw.createdAt ?? new Date().toISOString()),
   };
@@ -104,11 +151,47 @@ export const useChatStore = create<ChatState>((set, get) => {
   // Listener cleanup handle kept in closure
   let streamCleanup: (() => void) | undefined;
   let approvalCleanup: (() => void) | undefined;
+  let clarificationExpiryTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function clearClarificationExpiryTimer() {
+    if (clarificationExpiryTimer) {
+      clearTimeout(clarificationExpiryTimer);
+      clarificationExpiryTimer = undefined;
+    }
+  }
+
+  function scheduleClarificationExpiry(
+    clarificationId: string,
+    expiresAt?: number,
+  ) {
+    clearClarificationExpiryTimer();
+    if (!expiresAt) return;
+    const delay = Math.max(0, expiresAt - Date.now());
+    clarificationExpiryTimer = setTimeout(() => {
+      clarificationExpiryTimer = undefined;
+      set((state) => (
+        state.pendingClarification?.id === clarificationId
+          ? { pendingClarification: null }
+          : {}
+      ));
+    }, delay);
+  }
 
   // Register global listeners once
   function ensureListeners() {
     if (!streamCleanup) {
       streamCleanup = ipc.onChatStream((event) => {
+        if (!event || typeof event !== 'object') return;
+
+        const streamEvent = event as Record<string, unknown>;
+        const eventSessionId = typeof streamEvent.sessionId === 'string' ? streamEvent.sessionId : null;
+        const activeSessionId = get().currentSessionId;
+
+        // Ignore events from other sessions to avoid cross-session stream pollution.
+        if (eventSessionId && activeSessionId && eventSessionId !== activeSessionId) {
+          return;
+        }
+
         const state = get();
 
         if (event.type === 'text_delta' && typeof event.content === 'string') {
@@ -149,6 +232,19 @@ export const useChatStore = create<ChatState>((set, get) => {
           useGitStore.getState().refreshStatus().catch(() => {
             // Silently ignore — git status refresh is best-effort
           });
+        } else if (event.type === 'preview_ready') {
+          const previewUrl = typeof event.previewUrl === 'string' ? event.previewUrl : '';
+          const targetSessionId = typeof streamEvent.sessionId === 'string'
+            ? streamEvent.sessionId
+            : get().currentSessionId;
+          if (previewUrl && targetSessionId) {
+            set((s) => ({
+              previewUrls: {
+                ...s.previewUrls,
+                [targetSessionId]: previewUrl,
+              },
+            }));
+          }
         } else if (event.type === 'approval_req') {
           // Surface approval request from agent stream
           const approvalData = event as unknown as {
@@ -169,21 +265,53 @@ export const useChatStore = create<ChatState>((set, get) => {
               },
             });
           }
+        } else if (event.type === 'clarification_req') {
+          const clarificationData = event as unknown as {
+            clarificationId?: string;
+            questions?: string[];
+            sessionId?: string;
+            timestamp?: number;
+            clarificationExpiresAt?: number;
+          };
+          if (clarificationData.clarificationId && Array.isArray(clarificationData.questions)) {
+            const questions = clarificationData.questions
+              .filter((q): q is string => typeof q === 'string')
+              .map((q) => q.trim())
+              .filter((q) => q.length > 0);
+            if (questions.length > 0) {
+              const resolvedSessionId = clarificationData.sessionId ?? eventSessionId ?? '';
+              const expiresAt = typeof clarificationData.clarificationExpiresAt === 'number'
+                ? clarificationData.clarificationExpiresAt
+                : undefined;
+              set({
+                pendingClarification: {
+                  id: clarificationData.clarificationId,
+                  sessionId: resolvedSessionId,
+                  questions,
+                  timestamp: clarificationData.timestamp ?? Date.now(),
+                  expiresAt,
+                },
+              });
+              scheduleClarificationExpiry(clarificationData.clarificationId, expiresAt);
+            }
+          }
         } else if (event.type === 'turn_end') {
+          clearClarificationExpiryTimer();
           set((s) => {
             const messages = s.messages.map((m) =>
               m.isStreaming ? { ...m, isStreaming: false } : m,
             );
-            return { isStreaming: false, messages };
+            return { isStreaming: false, messages, pendingClarification: null };
           });
         } else if (event.type === 'error') {
+          clearClarificationExpiryTimer();
           set((s) => {
             const messages = s.messages.map((m) =>
               m.isStreaming
                 ? { ...m, isStreaming: false, content: m.content + `\n\n[Error: ${(event.errorMessage ?? event.content) as string ?? 'Unknown error'}]` }
                 : m,
             );
-            return { isStreaming: false, messages };
+            return { isStreaming: false, messages, pendingClarification: null };
           });
         }
       });
@@ -191,6 +319,10 @@ export const useChatStore = create<ChatState>((set, get) => {
 
     if (!approvalCleanup) {
       approvalCleanup = ipc.onApprovalRequest((request) => {
+        const activeSessionId = get().currentSessionId;
+        if (request?.sessionId && activeSessionId && request.sessionId !== activeSessionId) {
+          return;
+        }
         set({ pendingApproval: request });
       });
     }
@@ -203,8 +335,10 @@ export const useChatStore = create<ChatState>((set, get) => {
     sessions: [],
     currentSessionId: null,
     messages: [],
+    previewUrls: {},
     isStreaming: false,
     pendingApproval: null,
+    pendingClarification: null,
 
     loadSessions: async () => {
       const sessions = (await ipc.listSessions()) as unknown as Record<string, unknown>[];
@@ -246,7 +380,13 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
 
     selectSession: async (sessionId) => {
-      set({ currentSessionId: sessionId, messages: [], isStreaming: false });
+      clearClarificationExpiryTimer();
+      set({
+        currentSessionId: sessionId,
+        messages: [],
+        isStreaming: false,
+        pendingClarification: null,
+      });
 
       const history = await ipc.chatHistory(sessionId);
       set({ messages: (history as unknown as Record<string, unknown>[]).map(normalizeMessage) });
@@ -257,18 +397,32 @@ export const useChatStore = create<ChatState>((set, get) => {
       set((state) => {
         const sessions = state.sessions.filter((s) => s.id !== sessionId);
         const isCurrent = state.currentSessionId === sessionId;
+        const nextPreviewUrls = { ...state.previewUrls };
+        delete nextPreviewUrls[sessionId];
         return {
           sessions,
           currentSessionId: isCurrent ? (sessions[0]?.id ?? null) : state.currentSessionId,
           messages: isCurrent ? [] : state.messages,
+          previewUrls: nextPreviewUrls,
+          pendingClarification: isCurrent ? null : state.pendingClarification,
         };
       });
+      const currentPending = get().pendingClarification;
+      if (currentPending?.sessionId === sessionId) {
+        clearClarificationExpiryTimer();
+        set({ pendingClarification: null });
+      }
     },
 
-    sendMessage: async (content) => {
+    sendMessage: async (content, attachments = []) => {
       const { currentSessionId, sessions } = get();
       if (!currentSessionId) {
         throw new Error('No active session');
+      }
+      const text = content.trim();
+      const safeAttachments = attachments.filter((a) => a.type === 'image' && a.mimeType && a.data);
+      if (!text && safeAttachments.length === 0) {
+        throw new Error('Message content or attachments is required');
       }
       const session = sessions.find((s) => s.id === currentSessionId);
       const currentAgentType = (useAgentsStore.getState().currentAgentType ?? session?.agentId ?? 'coding') as
@@ -286,7 +440,8 @@ export const useChatStore = create<ChatState>((set, get) => {
         id: makeId(),
         sessionId: currentSessionId,
         role: 'user',
-        content,
+        content: text,
+        attachments: safeAttachments.length > 0 ? safeAttachments : undefined,
         createdAt: new Date().toISOString(),
       };
 
@@ -307,13 +462,14 @@ export const useChatStore = create<ChatState>((set, get) => {
 
       // 3. Send via IPC — stream events handled by the listener
       try {
-        await ipc.sendMessage(currentSessionId, content, {
+        await ipc.sendMessage(currentSessionId, text, {
           agentType: currentAgentType,
           mode,
           cliBackend,
           providerId,
           modelId,
           workDirectory: session?.workDirectory,
+          attachments: safeAttachments.length > 0 ? safeAttachments : undefined,
         });
       } catch (err) {
         set((state) => {
@@ -404,6 +560,36 @@ export const useChatStore = create<ChatState>((set, get) => {
     respondToApproval: async (approvalId, approved) => {
       await ipc.respondApproval(approvalId, approved);
       set({ pendingApproval: null });
+    },
+
+    respondToClarification: async (clarificationId, answers) => {
+      const state = get();
+      let clearPending = false;
+      try {
+        await ipc.respondClarification({
+          clarificationId,
+          sessionId: state.currentSessionId ?? undefined,
+          answers,
+        });
+        clearPending = true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (/not found|expired|session mismatch/i.test(message)) {
+          clearPending = true;
+          console.warn('[Chat] clarification response ignored:', message);
+          return;
+        }
+        throw err;
+      } finally {
+        if (clearPending) {
+          clearClarificationExpiryTimer();
+          set((current) => (
+            current.pendingClarification?.id === clarificationId
+              ? { pendingClarification: null }
+              : {}
+          ));
+        }
+      }
     },
 
     setCurrentSessionAgent: (agentType) => {

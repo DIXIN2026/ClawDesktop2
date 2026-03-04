@@ -11,6 +11,9 @@ import {
   TestTube,
   Wrench,
   RefreshCw,
+  Sparkles,
+  AlertTriangle,
+  CheckCircle2,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -18,6 +21,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ipc } from '@/services/ipc';
+import { toast } from 'sonner';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -34,6 +38,14 @@ interface SkillInfo {
   rating?: number;
   tools?: Array<{ name: string; description: string }>;
   installed?: boolean;
+}
+
+interface GeneratedSkillDraft {
+  manifest: Record<string, unknown>;
+  skillPrompt: string;
+  warnings: string[];
+  providerId: string;
+  modelId: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,6 +73,12 @@ export function SkillsPage() {
   const [installedSkills, setInstalledSkills] = useState<SkillInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [installingIds, setInstallingIds] = useState<Set<string>>(new Set());
+  const [generationRequirement, setGenerationRequirement] = useState('');
+  const [generatedDraft, setGeneratedDraft] = useState<GeneratedSkillDraft | null>(null);
+  const [generatedManifestText, setGeneratedManifestText] = useState('');
+  const [generatedPromptText, setGeneratedPromptText] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isInstallingGenerated, setIsInstallingGenerated] = useState(false);
 
   // Fetch installed skills from backend
   const loadInstalled = useCallback(async () => {
@@ -145,6 +163,47 @@ export function SkillsPage() {
     }
   };
 
+  const handleGenerateSkill = async () => {
+    const requirement = generationRequirement.trim();
+    if (!requirement) return;
+
+    setIsGenerating(true);
+    try {
+      const draft = await ipc.generateSkill({ requirement });
+      setGeneratedDraft(draft as GeneratedSkillDraft);
+      const manifestText = JSON.stringify((draft as GeneratedSkillDraft).manifest, null, 2);
+      setGeneratedManifestText(manifestText);
+      setGeneratedPromptText((draft as GeneratedSkillDraft).skillPrompt);
+      toast.success('技能草稿已生成');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleInstallGenerated = async () => {
+    if (!generatedManifestText.trim() || !generatedPromptText.trim()) {
+      toast.error('请先生成并确认 manifest 与 SKILL.md');
+      return;
+    }
+
+    setIsInstallingGenerated(true);
+    try {
+      const parsedManifest = JSON.parse(generatedManifestText) as Record<string, unknown>;
+      const res = await ipc.installGeneratedSkill({
+        manifest: parsedManifest,
+        skillPrompt: generatedPromptText,
+      });
+      await loadInstalled();
+      toast.success(`已安装生成技能: ${res.id}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsInstallingGenerated(false);
+    }
+  };
+
   const installedIds = new Set(installedSkills.map((s) => s.id));
 
   const filterByCategory = (skills: SkillInfo[]): SkillInfo[] => {
@@ -166,6 +225,88 @@ export function SkillsPage() {
         <p className="text-muted-foreground mb-6">
           从 ClawHub 市场浏览和安装技能，扩展智能体能力。
         </p>
+
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Sparkles className="h-4 w-4" />
+              AI 生成技能
+            </CardTitle>
+            <CardDescription>
+              输入需求描述，自动生成 `manifest.json` 与 `SKILL.md` 草稿，可手动编辑后安装。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <textarea
+              value={generationRequirement}
+              onChange={(e) => setGenerationRequirement(e.target.value)}
+              className="w-full rounded-md border bg-background px-3 py-2 text-sm resize-y min-h-[92px]"
+              placeholder="例如：生成一个 code 类技能，能够根据用户输入整理重构计划并输出可执行步骤。"
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={() => void handleGenerateSkill()}
+                disabled={isGenerating || !generationRequirement.trim()}
+              >
+                {isGenerating ? (
+                  <RefreshCw className="h-4 w-4 mr-1.5 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4 mr-1.5" />
+                )}
+                {isGenerating ? '生成中...' : '生成草稿'}
+              </Button>
+              {generatedDraft && (
+                <Badge variant="outline" className="text-xs">
+                  {generatedDraft.providerId}/{generatedDraft.modelId}
+                </Badge>
+              )}
+            </div>
+
+            {generatedDraft?.warnings && generatedDraft.warnings.length > 0 && (
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 space-y-1">
+                <div className="text-xs font-medium flex items-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                  生成提示
+                </div>
+                {generatedDraft.warnings.map((w) => (
+                  <p key={w} className="text-xs text-muted-foreground">{w}</p>
+                ))}
+              </div>
+            )}
+
+            {generatedDraft && (
+              <div className="space-y-3">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">manifest.json</p>
+                  <textarea
+                    value={generatedManifestText}
+                    onChange={(e) => setGeneratedManifestText(e.target.value)}
+                    className="w-full rounded-md border bg-background px-3 py-2 text-xs font-mono resize-y min-h-[220px]"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">SKILL.md</p>
+                  <textarea
+                    value={generatedPromptText}
+                    onChange={(e) => setGeneratedPromptText(e.target.value)}
+                    className="w-full rounded-md border bg-background px-3 py-2 text-xs font-mono resize-y min-h-[180px]"
+                  />
+                </div>
+                <Button
+                  onClick={() => void handleInstallGenerated()}
+                  disabled={isInstallingGenerated}
+                >
+                  {isInstallingGenerated ? (
+                    <RefreshCw className="h-4 w-4 mr-1.5 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4 mr-1.5" />
+                  )}
+                  {isInstallingGenerated ? '安装中...' : '保存并安装'}
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Search */}
         <div className="relative mb-6">

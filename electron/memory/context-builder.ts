@@ -3,7 +3,7 @@
  * Assembles agent prompt context by injecting relevant memories.
  * Mirrors CoPaw CoPawInMemoryMemory — loads summaries + cross-session search results.
  */
-import { getLatestSessionSummary, getMemoryConfig } from './memory-store.js';
+import { getLatestSessionSummary, getMemoryConfig, listPreferenceObservations } from './memory-store.js';
 import { searchMemory } from './memory-search.js';
 import type { EmbeddingAdapter, ContextBuildResult, MemorySearchResult } from './types.js';
 
@@ -46,6 +46,29 @@ export async function buildAgentContext(params: {
       );
       tokensBudgetUsed += summaryTokens;
       summaryIncluded = true;
+    }
+  }
+
+  // 1.5 Inject persistent user preferences from memory graph.
+  const preferenceRows = listPreferenceObservations({ sessionId, limit: 8 });
+  if (preferenceRows.length > 0) {
+    const lines: string[] = [];
+    let prefTokens = 0;
+    const prefBudget = Math.floor(maxTokens * 0.25);
+    for (const pref of preferenceRows) {
+      const line = `- ${pref.content}`;
+      const t = estimateTokens(line);
+      if (prefTokens + t > prefBudget) break;
+      lines.push(line);
+      prefTokens += t;
+    }
+    if (lines.length > 0) {
+      parts.push(
+        '<user-preferences>\n' +
+        lines.join('\n') + '\n' +
+        '</user-preferences>',
+      );
+      tokensBudgetUsed += prefTokens;
     }
   }
 

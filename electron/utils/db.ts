@@ -226,6 +226,39 @@ const SCHEMA_SQL = `
     updated_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS memory_entities (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    entity_type TEXT NOT NULL CHECK(entity_type IN ('user','project','preference','topic','artifact')),
+    session_id TEXT,
+    metadata TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS memory_relations (
+    id TEXT PRIMARY KEY,
+    from_entity_id TEXT NOT NULL REFERENCES memory_entities(id) ON DELETE CASCADE,
+    to_entity_id TEXT NOT NULL REFERENCES memory_entities(id) ON DELETE CASCADE,
+    relation_type TEXT NOT NULL,
+    confidence REAL DEFAULT 0.5,
+    source_chunk_id TEXT,
+    metadata TEXT,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS memory_observations (
+    id TEXT PRIMARY KEY,
+    entity_id TEXT NOT NULL REFERENCES memory_entities(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    category TEXT NOT NULL CHECK(category IN ('preference','fact','constraint')),
+    confidence REAL DEFAULT 0.5,
+    source_chunk_id TEXT,
+    session_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
   -- Indexes
   CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
   CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
@@ -242,6 +275,14 @@ const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_memory_chunks_session ON memory_chunks(session_id);
   CREATE INDEX IF NOT EXISTS idx_memory_chunks_source ON memory_chunks(source);
   CREATE INDEX IF NOT EXISTS idx_memory_chunks_created ON memory_chunks(created_at);
+  CREATE INDEX IF NOT EXISTS idx_memory_entities_type ON memory_entities(entity_type);
+  CREATE INDEX IF NOT EXISTS idx_memory_entities_session ON memory_entities(session_id);
+  CREATE INDEX IF NOT EXISTS idx_memory_relations_from ON memory_relations(from_entity_id);
+  CREATE INDEX IF NOT EXISTS idx_memory_relations_to ON memory_relations(to_entity_id);
+  CREATE INDEX IF NOT EXISTS idx_memory_observations_entity ON memory_observations(entity_id);
+  CREATE INDEX IF NOT EXISTS idx_memory_observations_category ON memory_observations(category);
+  CREATE INDEX IF NOT EXISTS idx_memory_observations_session ON memory_observations(session_id);
+  CREATE INDEX IF NOT EXISTS idx_memory_observations_updated ON memory_observations(updated_at);
 `;
 
 // ---------------------------------------------------------------------------
@@ -254,23 +295,40 @@ const SCHEMA_SQL = `
  *                 `app.getPath('userData')/clawdesktop2.db`.
  */
 export function initDatabase(dbPath?: string): void {
-  if (db) return; // Already initialized
+  if (db) return;
 
-  const resolvedPath = dbPath ?? join(app.getPath('userData'), 'clawdesktop2.db');
-  mkdirSync(dirname(resolvedPath), { recursive: true });
+  const primaryPath = dbPath ?? process.env.CLAWDESKTOP2_DB_PATH ?? join(app.getPath('userData'), 'clawdesktop2.db');
+  const fallbackPath = join(process.cwd(), '.clawdesktop2-data', 'clawdesktop2.db');
+  const candidatePaths = primaryPath === fallbackPath ? [primaryPath] : [primaryPath, fallbackPath];
+  let lastError: unknown = null;
 
-  db = new Database(resolvedPath);
+  for (const candidatePath of candidatePaths) {
+    let openedDb: Database.Database | null = null;
+    try {
+      mkdirSync(dirname(candidatePath), { recursive: true });
+      openedDb = new Database(candidatePath);
+      openedDb.pragma('journal_mode = WAL');
+      openedDb.pragma('synchronous = NORMAL');
+      openedDb.pragma('foreign_keys = ON');
+      openedDb.exec(SCHEMA_SQL);
+      db = openedDb;
+      runMigrations();
+      return;
+    } catch (err) {
+      lastError = err;
+      try {
+        openedDb?.close();
+      } catch {
+        void 0;
+      }
+      db = null;
+    }
+  }
 
-  // Performance pragmas
-  db.pragma('journal_mode = WAL');
-  db.pragma('synchronous = NORMAL');
-  db.pragma('foreign_keys = ON');
-
-  // Create schema
-  db.exec(SCHEMA_SQL);
-
-  // Run migrations
-  runMigrations();
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
+  throw new Error('Failed to initialize database');
 }
 
 /** Close the database connection. */

@@ -4,6 +4,7 @@
  * - feishu   (OpenClaw-style primary Feishu account)
  * - feishu2  (CoPaw-style secondary Feishu account)
  * - qq       (QQ Bot)
+ * - email    (SMTP outbound notifications)
  */
 import { getChannelManager } from './manager.js';
 import type { ChannelInstance, ChannelStatus } from './manager.js';
@@ -12,9 +13,15 @@ import type { QQBotConfig, QQConnectionState } from './qq/types.js';
 import { QQThreadBinder } from './qq/thread-binding.js';
 import { FeishuDesktopChannel } from './feishu-desktop/channel.js';
 import type { FeishuDesktopConfig, FeishuConnectionState } from './feishu-desktop/types.js';
-import { getSetting, getChannelState } from '../utils/db.js';
-
-type ConfigurableChannelId = 'qq' | 'feishu' | 'feishu2';
+import { EmailChannel } from './email/channel.js';
+import type { EmailConfig, EmailConnectionState } from './email/types.js';
+import { getSetting, getChannelState, setSetting, setChannelState } from '../utils/db.js';
+import {
+  isConfigurableChannelId,
+  sanitizeChannelConfigForStorage,
+  hydrateChannelConfigSecrets,
+  type ConfigurableChannelId,
+} from './secure-config.js';
 
 function qqStateToChannelStatus(state: QQConnectionState): ChannelStatus {
   switch (state) {
@@ -97,6 +104,63 @@ function feishuStateToChannelStatus(state: FeishuConnectionState): ChannelStatus
     case 'disconnected': return 'disconnected';
     default: return 'disconnected';
   }
+}
+
+function emailStateToChannelStatus(state: EmailConnectionState): ChannelStatus {
+  switch (state) {
+    case 'connected': return 'connected';
+    case 'connecting': return 'connecting';
+    case 'reconnecting': return 'reconnecting';
+    case 'disconnected': return 'disconnected';
+    default: return 'disconnected';
+  }
+}
+
+function resolveEmailTargetFromSessionId(sessionId: string): string | undefined {
+  const parts = sessionId.split(':');
+  const maybeTarget = (parts[parts.length - 1] ?? '').trim();
+  if (maybeTarget.includes('@')) {
+    return maybeTarget;
+  }
+  return undefined;
+}
+
+function createEmailChannelInstance(config: EmailConfig): ChannelInstance {
+  let emailChannel: EmailChannel | null = null;
+
+  const instance: ChannelInstance = {
+    type: 'email',
+    id: 'email',
+    status: 'disconnected',
+    start: async () => {
+      emailChannel = new EmailChannel(config, {
+        onStateChange: (state) => {
+          instance.status = emailStateToChannelStatus(state);
+        },
+        onError: (err) => {
+          console.error('[Email Channel] Error:', err.message);
+          instance.status = 'error';
+        },
+      });
+      await emailChannel.start();
+    },
+    stop: async () => {
+      if (emailChannel) {
+        await emailChannel.stop();
+        emailChannel = null;
+      }
+    },
+    send: async (sessionId, content) => {
+      if (!emailChannel) throw new Error('Email channel not started');
+      const to = resolveEmailTargetFromSessionId(sessionId);
+      await emailChannel.send({
+        to,
+        content,
+      });
+    },
+  };
+
+  return instance;
 }
 
 function createFeishuChannelInstance(
@@ -195,17 +259,51 @@ function toFeishuConfig(config: Record<string, unknown> | null): FeishuDesktopCo
   };
 }
 
+function toEmailConfig(config: Record<string, unknown> | null): EmailConfig {
+  const rawPort = config?.port;
+  const parsedPort = typeof rawPort === 'number'
+    ? rawPort
+    : typeof rawPort === 'string'
+      ? Number.parseInt(rawPort, 10)
+      : Number.NaN;
+
+  return {
+    host: typeof config?.host === 'string' ? config.host : '',
+    port: Number.isFinite(parsedPort) ? parsedPort : 465,
+    secure: config?.secure !== false,
+    username: typeof config?.username === 'string' ? config.username : undefined,
+    password: typeof config?.password === 'string' ? config.password : undefined,
+    from: typeof config?.from === 'string' ? config.from : '',
+    to: typeof config?.to === 'string' ? config.to : '',
+    subjectPrefix: typeof config?.subjectPrefix === 'string' ? config.subjectPrefix : undefined,
+  };
+}
+
 function createInstance(channelId: ConfigurableChannelId, rawConfig: Record<string, unknown> | null): ChannelInstance {
   if (channelId === 'qq') {
     return createQQChannelInstance(toQQConfig(rawConfig));
   }
+  if (channelId === 'email') {
+    return createEmailChannelInstance(toEmailConfig(rawConfig));
+  }
   return createFeishuChannelInstance(channelId, toFeishuConfig(rawConfig));
 }
 
-export function registerOrUpdateChannel(
+function persistSanitizedConfig(channelId: ConfigurableChannelId, config: Record<string, unknown>): void {
+  const serialized = JSON.stringify(config);
+  setChannelState({
+    id: channelId,
+    channelType: channelId,
+    config: serialized,
+    status: 'configured',
+  });
+  setSetting(`channel:${channelId}:config`, serialized);
+}
+
+export async function registerOrUpdateChannel(
   channelId: ConfigurableChannelId,
   rawConfig?: Record<string, unknown>,
-): void {
+): Promise<void> {
   const manager = getChannelManager();
   const channel = manager.getChannel(channelId);
   const wasConnected = channel?.status === 'connected';
@@ -214,11 +312,28 @@ export function registerOrUpdateChannel(
   }
 
   const resolvedConfig = rawConfig ?? loadStoredChannelConfig(channelId);
-  manager.register(createInstance(channelId, resolvedConfig));
+  let configForStorage: Record<string, unknown> | null = resolvedConfig ?? null;
+  let removedSecretFields: string[] = [];
+
+  if (resolvedConfig && isConfigurableChannelId(channelId)) {
+    const result = await sanitizeChannelConfigForStorage(channelId, resolvedConfig);
+    configForStorage = result.sanitizedConfig;
+    removedSecretFields = result.removedSecretFields;
+  }
+
+  if (configForStorage && removedSecretFields.length > 0) {
+    persistSanitizedConfig(channelId, configForStorage);
+  }
+
+  const runtimeConfig = isConfigurableChannelId(channelId)
+    ? await hydrateChannelConfigSecrets(channelId, configForStorage)
+    : (configForStorage ?? null);
+
+  manager.register(createInstance(channelId, runtimeConfig));
 
   // Best-effort: keep previous running status after config update.
   if (wasConnected) {
-    manager.start(channelId).catch((err) => {
+    void manager.start(channelId).catch((err) => {
       console.warn(`[Channels] Failed to restart ${channelId} after config update:`, err instanceof Error ? err.message : String(err));
     });
   }
@@ -228,8 +343,9 @@ export function registerOrUpdateChannel(
  * Register all configured channels with the ChannelManager.
  * Called once during app initialization.
  */
-export function registerChannels(): void {
-  registerOrUpdateChannel('feishu');
-  registerOrUpdateChannel('feishu2');
-  registerOrUpdateChannel('qq');
+export async function registerChannels(): Promise<void> {
+  await registerOrUpdateChannel('feishu');
+  await registerOrUpdateChannel('feishu2');
+  await registerOrUpdateChannel('qq');
+  await registerOrUpdateChannel('email');
 }

@@ -18,6 +18,20 @@ export interface MemoryStats {
   chunksWithEmbeddings: number;
   oldestChunkDate: string | null;
   newestChunkDate: string | null;
+  totalGraphEntities?: number;
+  totalGraphRelations?: number;
+  totalPreferenceObservations?: number;
+}
+
+export interface MemoryPreferenceObservation {
+  id: string;
+  content: string;
+  category: 'preference' | 'fact' | 'constraint';
+  confidence: number;
+  sessionId: string | null;
+  sourceChunkId: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface MemoryConfig {
@@ -31,16 +45,19 @@ export interface MemoryConfig {
 
 interface MemoryState {
   searchResults: MemorySearchResult[];
+  preferences: MemoryPreferenceObservation[];
   stats: MemoryStats | null;
   config: MemoryConfig | null;
   isSearching: boolean;
   isReindexing: boolean;
 
   search: (query: string, sessionId?: string | null) => Promise<void>;
+  loadPreferences: (sessionId?: string | null) => Promise<void>;
   loadStats: () => Promise<void>;
   loadConfig: () => Promise<void>;
   updateConfig: (key: string, value: string | number | boolean) => Promise<void>;
   deleteChunk: (chunkId: string) => Promise<void>;
+  deletePreference: (observationId: string) => Promise<void>;
   deleteSessionMemory: (sessionId: string) => Promise<void>;
   reindex: () => Promise<{ indexed: number }>;
 }
@@ -49,6 +66,7 @@ interface MemoryState {
 
 export const useMemoryStore = create<MemoryState>((set, get) => ({
   searchResults: [],
+  preferences: [],
   stats: null,
   config: null,
   isSearching: false,
@@ -67,6 +85,16 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
       set({ searchResults: [] });
     } finally {
       set({ isSearching: false });
+    }
+  },
+
+  loadPreferences: async (sessionId) => {
+    try {
+      const preferences = await ipc.memoryPreferencesList(sessionId ?? null, 100);
+      set({ preferences });
+    } catch (err) {
+      console.error('[Memory] loadPreferences failed:', err instanceof Error ? err.message : String(err));
+      set({ preferences: [] });
     }
   },
 
@@ -110,6 +138,18 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
       }));
     } catch (err) {
       console.error('[Memory] deleteChunk failed:', err instanceof Error ? err.message : String(err));
+      throw err;
+    }
+  },
+
+  deletePreference: async (observationId) => {
+    try {
+      await ipc.memoryPreferenceDelete(observationId);
+      set((state) => ({
+        preferences: state.preferences.filter((item) => item.id !== observationId),
+      }));
+    } catch (err) {
+      console.error('[Memory] deletePreference failed:', err instanceof Error ? err.message : String(err));
       throw err;
     }
   },

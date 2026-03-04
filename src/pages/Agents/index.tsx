@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { useAgentsStore } from '../../stores/agents';
 import type { AgentType, AgentConfig } from '../../stores/agents';
+import { useSettingsStore } from '../../stores/settings';
 import { ipc } from '../../services/ipc';
 
 // ── Agent type config ──────────────────────────────────────────────
@@ -44,6 +45,22 @@ interface Pipeline {
   id: string;
   name: string;
   steps: PipelineStep[];
+}
+
+interface PipelineStepResult {
+  stepId: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+  output: string;
+  durationMs: number;
+  error?: string;
+}
+
+interface PipelineProgress {
+  pipelineId: string;
+  status: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
+  currentStepIndex: number;
+  results: PipelineStepResult[];
+  startedAt: number;
 }
 
 // ── Agent Card ──────────────────────────────────────────────────────
@@ -147,8 +164,9 @@ function AgentConfigPanel({ agent, onUpdate }: {
 
 // ── Pipeline Editor ─────────────────────────────────────────────────
 
-function PipelineEditor({ pipeline, onChange, onDelete, onRun }: {
+function PipelineEditor({ pipeline, progress, onChange, onDelete, onRun }: {
   pipeline: Pipeline;
+  progress?: PipelineProgress;
   onChange: (p: Pipeline) => void;
   onDelete: () => void;
   onRun: () => void;
@@ -175,6 +193,38 @@ function PipelineEditor({ pipeline, onChange, onDelete, onRun }: {
 
   return (
     <div className="space-y-4">
+      {progress && (
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium">执行进度</span>
+            <span className={`text-xs px-2 py-0.5 rounded-full ${
+              progress.status === 'running' ? 'bg-blue-100 text-blue-700'
+                : progress.status === 'completed' ? 'bg-green-100 text-green-700'
+                : progress.status === 'failed' ? 'bg-red-100 text-red-700'
+                : progress.status === 'cancelled' ? 'bg-zinc-200 text-zinc-700'
+                : 'bg-zinc-100 text-zinc-600'
+            }`}>
+              {progress.status}
+            </span>
+          </div>
+          <div className="space-y-1">
+            {progress.results.map((result) => (
+              <div key={result.stepId} className="text-xs flex items-center justify-between text-zinc-600 dark:text-zinc-300">
+                <span className="truncate pr-2">{result.stepId}</span>
+                <span className={`shrink-0 ${
+                  result.status === 'completed' ? 'text-green-600'
+                    : result.status === 'failed' ? 'text-red-600'
+                    : result.status === 'skipped' ? 'text-zinc-500'
+                    : 'text-blue-600'
+                }`}>
+                  {result.status} ({Math.round(result.durationMs)}ms)
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <input
           value={pipeline.name}
@@ -242,10 +292,12 @@ function PipelineEditor({ pipeline, onChange, onDelete, onRun }: {
 
 export default function AgentsPage() {
   const { agents, loadAgents, updateAgent } = useAgentsStore();
+  const defaultWorkDirectory = useSettingsStore((s) => s.workDirectory);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'agents' | 'pipelines'>('agents');
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [selectedPipeline, setSelectedPipeline] = useState<string | null>(null);
+  const [pipelineProgress, setPipelineProgress] = useState<Record<string, PipelineProgress>>({});
 
   useEffect(() => {
     loadAgents();
@@ -253,6 +305,20 @@ export default function AgentsPage() {
 
   const selected = agents.find((a) => a.id === selectedAgent);
   const selectedPipe = pipelines.find((p) => p.id === selectedPipeline);
+  const selectedPipelineProgress = selectedPipe ? pipelineProgress[selectedPipe.id] : undefined;
+
+  useEffect(() => {
+    const unsubscribe = ipc.onOrchestratorProgress((progress) => {
+      if (!progress?.pipelineId) return;
+      setPipelineProgress((prev) => ({
+        ...prev,
+        [progress.pipelineId]: progress,
+      }));
+    });
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
 
   const createPipeline = useCallback(() => {
     const id = `pipeline-${Date.now()}`;
@@ -279,12 +345,12 @@ export default function AgentsPage() {
           providerId: s.providerId,
           modelId: s.modelId,
         })),
-        workDirectory: process.cwd?.() ?? '.',
+        workDirectory: defaultWorkDirectory?.trim() || '.',
       });
     } catch (err) {
       console.error('Pipeline execution failed:', err);
     }
-  }, []);
+  }, [defaultWorkDirectory]);
 
   return (
     <div className="flex flex-col h-full">
@@ -358,7 +424,19 @@ export default function AgentsPage() {
                   <Workflow className="w-4 h-4 shrink-0" />
                   <span className="truncate">{p.name}</span>
                 </div>
-                <span className="text-xs text-zinc-400 ml-6">{p.steps.length} 步骤</span>
+                <div className="ml-6 flex items-center gap-2">
+                  <span className="text-xs text-zinc-400">{p.steps.length} 步骤</span>
+                  {pipelineProgress[p.id] && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                      pipelineProgress[p.id].status === 'running' ? 'bg-blue-100 text-blue-700'
+                        : pipelineProgress[p.id].status === 'completed' ? 'bg-green-100 text-green-700'
+                        : pipelineProgress[p.id].status === 'failed' ? 'bg-red-100 text-red-700'
+                        : 'bg-zinc-100 text-zinc-600'
+                    }`}>
+                      {pipelineProgress[p.id].status}
+                    </span>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -368,6 +446,7 @@ export default function AgentsPage() {
             {selectedPipe ? (
               <PipelineEditor
                 pipeline={selectedPipe}
+                progress={selectedPipelineProgress}
                 onChange={(updated) => {
                   setPipelines((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
                 }}

@@ -15,6 +15,7 @@ export type {
   MemoryConfig,
   EmbeddingAdapter,
   MemoryStats,
+  MemoryPreferenceObservation,
 } from './types.js';
 
 export { DEFAULT_MEMORY_CONFIG } from './types.js';
@@ -35,6 +36,9 @@ export {
   getMemoryConfig,
   setMemoryConfigValue,
   getMemoryStats,
+  upsertPreferenceObservation,
+  listPreferenceObservations,
+  deletePreferenceObservation,
 } from './memory-store.js';
 
 export {

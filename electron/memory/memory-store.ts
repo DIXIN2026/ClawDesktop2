@@ -2,6 +2,7 @@
  * Memory Store — SQLite CRUD for memory_chunks, memory_summaries, memory_config
  * Uses the existing db.ts helpers (synchronous better-sqlite3).
  */
+import { randomUUID } from 'node:crypto';
 import { query, get, run, transaction } from '../utils/db.js';
 import { DEFAULT_MEMORY_CONFIG } from './types.js';
 import type {
@@ -11,6 +12,7 @@ import type {
   SummaryType,
   MemoryConfig,
   MemoryStats,
+  MemoryPreferenceObservation,
 } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -40,6 +42,18 @@ interface MemorySummaryRow {
 interface MemoryConfigRow {
   key: string;
   value: string;
+  updated_at: string;
+}
+
+interface MemoryObservationRow {
+  id: string;
+  entity_id: string;
+  content: string;
+  category: 'preference' | 'fact' | 'constraint';
+  confidence: number | null;
+  source_chunk_id: string | null;
+  session_id: string | null;
+  created_at: string;
   updated_at: string;
 }
 
@@ -253,6 +267,116 @@ export function setMemoryConfigValue(key: string, value: string | number | boole
 }
 
 // ---------------------------------------------------------------------------
+// Knowledge Graph (User Preference Observations)
+// ---------------------------------------------------------------------------
+
+function rowToPreferenceObservation(row: MemoryObservationRow): MemoryPreferenceObservation {
+  return {
+    id: row.id,
+    content: row.content,
+    category: row.category,
+    confidence: row.confidence ?? 0.5,
+    sessionId: row.session_id,
+    sourceChunkId: row.source_chunk_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function ensureDefaultUserEntity(): string {
+  const entityId = 'entity-user-default';
+  const exists = get<{ id: string }>(
+    'SELECT id FROM memory_entities WHERE id = ?',
+    [entityId],
+  );
+  if (exists?.id) return entityId;
+
+  const now = new Date().toISOString();
+  run(
+    `INSERT INTO memory_entities (id, name, entity_type, session_id, metadata, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [entityId, 'current-user', 'user', null, null, now, now],
+  );
+  return entityId;
+}
+
+export function upsertPreferenceObservation(params: {
+  content: string;
+  sessionId?: string | null;
+  sourceChunkId?: string | null;
+  confidence?: number;
+}): string {
+  const content = params.content.trim();
+  if (!content) {
+    throw new Error('Preference content is required');
+  }
+  const entityId = ensureDefaultUserEntity();
+  const existing = get<{ id: string }>(
+    `SELECT id FROM memory_observations
+     WHERE entity_id = ? AND category = 'preference' AND lower(content) = lower(?)
+     LIMIT 1`,
+    [entityId, content],
+  );
+
+  const now = new Date().toISOString();
+  const confidence = Number.isFinite(params.confidence) ? Math.max(0, Math.min(1, params.confidence as number)) : 0.7;
+
+  if (existing?.id) {
+    run(
+      `UPDATE memory_observations
+       SET confidence = CASE WHEN confidence IS NULL OR confidence < ? THEN ? ELSE confidence END,
+           source_chunk_id = COALESCE(?, source_chunk_id),
+           session_id = COALESCE(?, session_id),
+           updated_at = ?
+       WHERE id = ?`,
+      [confidence, confidence, params.sourceChunkId ?? null, params.sessionId ?? null, now, existing.id],
+    );
+    return existing.id;
+  }
+
+  const id = randomUUID();
+  run(
+    `INSERT INTO memory_observations
+      (id, entity_id, content, category, confidence, source_chunk_id, session_id, created_at, updated_at)
+     VALUES (?, ?, ?, 'preference', ?, ?, ?, ?, ?)`,
+    [id, entityId, content, confidence, params.sourceChunkId ?? null, params.sessionId ?? null, now, now],
+  );
+  return id;
+}
+
+export function listPreferenceObservations(options?: {
+  sessionId?: string | null;
+  limit?: number;
+}): MemoryPreferenceObservation[] {
+  const limit = Math.max(1, Math.min(options?.limit ?? 50, 500));
+
+  let rows: MemoryObservationRow[];
+  if (options?.sessionId) {
+    rows = query<MemoryObservationRow>(
+      `SELECT * FROM memory_observations
+       WHERE category = 'preference' AND (session_id IS NULL OR session_id = ?)
+       ORDER BY updated_at DESC
+       LIMIT ?`,
+      [options.sessionId, limit],
+    );
+  } else {
+    rows = query<MemoryObservationRow>(
+      `SELECT * FROM memory_observations
+       WHERE category = 'preference'
+       ORDER BY updated_at DESC
+       LIMIT ?`,
+      [limit],
+    );
+  }
+
+  return rows.map(rowToPreferenceObservation);
+}
+
+export function deletePreferenceObservation(observationId: string): void {
+  run('DELETE FROM memory_observations WHERE id = ?', [observationId]);
+}
+
+// ---------------------------------------------------------------------------
 // Stats
 // ---------------------------------------------------------------------------
 
@@ -269,6 +393,15 @@ export function getMemoryStats(): MemoryStats {
   const newest = get<{ d: string | null }>(
     'SELECT MAX(created_at) as d FROM memory_chunks',
   )?.d ?? null;
+  const totalGraphEntities = get<{ cnt: number }>(
+    'SELECT COUNT(*) as cnt FROM memory_entities',
+  )?.cnt ?? 0;
+  const totalGraphRelations = get<{ cnt: number }>(
+    'SELECT COUNT(*) as cnt FROM memory_relations',
+  )?.cnt ?? 0;
+  const totalPreferenceObservations = get<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM memory_observations WHERE category = 'preference'`,
+  )?.cnt ?? 0;
 
   return {
     totalChunks,
@@ -276,5 +409,8 @@ export function getMemoryStats(): MemoryStats {
     chunksWithEmbeddings,
     oldestChunkDate: oldest,
     newestChunkDate: newest,
+    totalGraphEntities,
+    totalGraphRelations,
+    totalPreferenceObservations,
   };
 }

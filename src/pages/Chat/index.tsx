@@ -23,11 +23,17 @@ import { SessionList } from '@/components/chat/SessionList';
 import { MessageList } from '@/components/chat/MessageList';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { ApprovalDialog } from '@/components/chat/ApprovalDialog';
+import { ClarificationDialog } from '@/components/chat/ClarificationDialog';
 import { ReviewPanel } from '@/components/review/ReviewPanel';
+import { DesignPreview } from '@/components/preview/DesignPreview';
 
 import { useChatStore } from '@/stores/chat';
+import type { ChatAttachment } from '@/stores/chat';
 import { useAgentsStore } from '@/stores/agents';
 import { useProvidersStore } from '@/stores/providers';
+import { useGitStore } from '@/stores/git';
+import type { GitWorktree } from '@/stores/git';
+import { useSettingsStore } from '@/stores/settings';
 
 const AGENT_TYPE_ICONS: Record<string, React.ReactNode> = {
   coding: <Code className="h-4 w-4" />,
@@ -44,16 +50,25 @@ export function ChatPage() {
   const sessions = useChatStore((s) => s.sessions);
   const currentSessionId = useChatStore((s) => s.currentSessionId);
   const messages = useChatStore((s) => s.messages);
+  const previewUrls = useChatStore((s) => s.previewUrls);
   const isStreaming = useChatStore((s) => s.isStreaming);
   const pendingApproval = useChatStore((s) => s.pendingApproval);
+  const pendingClarification = useChatStore((s) => s.pendingClarification);
   const createSession = useChatStore((s) => s.createSession);
   const selectSession = useChatStore((s) => s.selectSession);
   const deleteSession = useChatStore((s) => s.deleteSession);
   const sendMessage = useChatStore((s) => s.sendMessage);
   const abortGeneration = useChatStore((s) => s.abortGeneration);
   const respondToApproval = useChatStore((s) => s.respondToApproval);
+  const respondToClarification = useChatStore((s) => s.respondToClarification);
   const loadSessions = useChatStore((s) => s.loadSessions);
   const setCurrentSessionAgent = useChatStore((s) => s.setCurrentSessionAgent);
+  const worktrees = useGitStore((s) => s.worktrees);
+  const loadWorktrees = useGitStore((s) => s.loadWorktrees);
+  const createWorktree = useGitStore((s) => s.createWorktree);
+  const removeWorktree = useGitStore((s) => s.removeWorktree);
+  const setGitWorkDirectory = useGitStore((s) => s.setWorkDirectory);
+  const defaultWorkDirectory = useSettingsStore((s) => s.workDirectory);
 
   // Agents store
   const agents = useAgentsStore((s) => s.agents);
@@ -72,6 +87,7 @@ export function ChatPage() {
   );
 
   const currentSession = sessions.find((s) => s.id === currentSessionId);
+  const currentPreviewUrl = currentSessionId ? previewUrls[currentSessionId] : undefined;
   const [selectedModel, setSelectedModel] = useState(
     currentSession?.currentModel ?? (availableModels[0]?.value ?? ''),
   );
@@ -80,6 +96,10 @@ export function ChatPage() {
   useEffect(() => {
     void loadSessions();
   }, [loadSessions]);
+
+  useEffect(() => {
+    void setGitWorkDirectory(currentSession?.workDirectory ?? defaultWorkDirectory ?? null);
+  }, [currentSession?.workDirectory, defaultWorkDirectory, setGitWorkDirectory]);
 
   // Update selected model when session changes
   useEffect(() => {
@@ -117,9 +137,31 @@ export function ChatPage() {
     [deleteSession],
   );
 
+  const handleWorktreeCreate = useCallback(
+    (branch: string, path: string) => {
+      void createWorktree(branch, path);
+    },
+    [createWorktree],
+  );
+
+  const handleWorktreeDelete = useCallback(
+    (path: string) => {
+      void removeWorktree(path);
+    },
+    [removeWorktree],
+  );
+
+  const handleWorktreeStartChat = useCallback(
+    (worktree: GitWorktree) => {
+      const title = worktree.branch ? `Worktree: ${worktree.branch}` : 'Worktree Chat';
+      void createSession(title, currentAgentType, worktree.path);
+    },
+    [createSession, currentAgentType],
+  );
+
   const handleSendMessage = useCallback(
-    (content: string) => {
-      void sendMessage(content);
+    (content: string, attachments?: ChatAttachment[]) => {
+      void sendMessage(content, attachments);
     },
     [sendMessage],
   );
@@ -136,6 +178,23 @@ export function ChatPage() {
     },
     [pendingApproval, respondToApproval],
   );
+
+  const handleClarificationSubmit = useCallback(
+    (answers: Record<string, string>) => {
+      if (!pendingClarification) return;
+      void respondToClarification(pendingClarification.id, answers).catch((err) => {
+        console.error('Failed to submit clarification:', err instanceof Error ? err.message : String(err));
+      });
+    },
+    [pendingClarification, respondToClarification],
+  );
+
+  const handleClarificationSkip = useCallback(() => {
+    if (!pendingClarification) return;
+    void respondToClarification(pendingClarification.id, {}).catch((err) => {
+      console.error('Failed to skip clarification:', err instanceof Error ? err.message : String(err));
+    });
+  }, [pendingClarification, respondToClarification]);
 
   const handleModelChange = useCallback(
     (value: string) => {
@@ -166,6 +225,13 @@ export function ChatPage() {
           onSelect={handleSelectSession}
           onCreate={() => void handleCreateSession()}
           onDelete={handleDeleteSession}
+          worktrees={worktrees}
+          currentWorktreePath={currentSession?.workDirectory ?? null}
+          onWorktreeRefresh={() => void loadWorktrees()}
+          onWorktreeCreate={handleWorktreeCreate}
+          onWorktreeDelete={handleWorktreeDelete}
+          onWorktreeStartChat={handleWorktreeStartChat}
+          defaultWorktreeBase={currentSession?.workDirectory ?? defaultWorkDirectory ?? null}
         />
       </div>
 
@@ -267,6 +333,13 @@ export function ChatPage() {
             onRespond={handleApprovalRespond}
           />
         )}
+        {pendingClarification && (
+          <ClarificationDialog
+            clarification={pendingClarification}
+            onSubmit={handleClarificationSubmit}
+            onSkip={handleClarificationSkip}
+          />
+        )}
       </div>
 
       {/* Right: Review/Diff panel */}
@@ -276,7 +349,11 @@ export function ChatPage() {
           showReviewPanel ? 'w-96' : 'w-0 overflow-hidden',
         )}
       >
-        <ReviewPanel />
+        {currentAgentType === 'design' && currentPreviewUrl ? (
+          <DesignPreview url={currentPreviewUrl} className="h-full rounded-none border-0" />
+        ) : (
+          <ReviewPanel />
+        )}
       </div>
     </div>
   );

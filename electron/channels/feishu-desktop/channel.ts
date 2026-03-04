@@ -15,14 +15,6 @@ import { sendTextMessage, sendMarkdownCard } from './send.js';
 const DEDUP_TTL_MS = 5 * 60 * 1000;
 /** Dedup cleanup interval: 60 seconds */
 const DEDUP_CLEANUP_INTERVAL_MS = 60 * 1000;
-/** Typing indicator debounce: 3 seconds */
-const TYPING_DEBOUNCE_MS = 3 * 1000;
-
-/** Response shape for typing indicator API */
-interface FeishuTypingResponse {
-  code?: number;
-  msg?: string;
-}
 
 export class FeishuDesktopChannel {
   private client: FeishuClient;
@@ -33,9 +25,6 @@ export class FeishuDesktopChannel {
   // Message deduplication (messageId -> timestamp)
   private messageDedup = new Map<string, number>();
   private dedupCleanupInterval: ReturnType<typeof setInterval> | null = null;
-
-  // Typing indicator debounce (chatId -> last sent timestamp)
-  private typingDebounce = new Map<string, number>();
 
   constructor(config: FeishuDesktopConfig, callbacks: FeishuChannelCallbacks) {
     this.config = config;
@@ -90,10 +79,6 @@ export class FeishuDesktopChannel {
       for (const [id, ts] of this.messageDedup) {
         if (ts < cutoff) this.messageDedup.delete(id);
       }
-      // Also clean stale typing debounce entries
-      for (const [chatId, ts] of this.typingDebounce) {
-        if (ts < cutoff) this.typingDebounce.delete(chatId);
-      }
     }, DEDUP_CLEANUP_INTERVAL_MS);
 
     try {
@@ -113,7 +98,6 @@ export class FeishuDesktopChannel {
 
     this.client.disconnect();
     this.messageDedup.clear();
-    this.typingDebounce.clear();
     this.setState('disconnected');
   }
 
@@ -156,7 +140,7 @@ export class FeishuDesktopChannel {
    * This method is a no-op placeholder for interface compatibility.
    * The typing indicator UI is handled automatically by Feishu clients.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   async sendTypingIndicator(_chatId: string): Promise<void> {
     // Feishu does not expose a typing indicator API.
     // This method exists only to satisfy the ChannelInstance interface.

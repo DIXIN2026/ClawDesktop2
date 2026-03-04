@@ -92,6 +92,39 @@ interface ChatSendOptions {
   modelId?: string;
   agentType?: 'coding' | 'requirements' | 'design' | 'testing';
   workDirectory?: string;
+  attachments?: Array<{
+    type: 'image';
+    mimeType: string;
+    data: string;
+    name?: string;
+    size?: number;
+  }>;
+}
+
+interface GitWorktreeEntry {
+  path: string;
+  branch: string;
+  isMain: boolean;
+}
+
+interface OrchestratorProgressEvent {
+  pipelineId: string;
+  status: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
+  currentStepIndex: number;
+  results: Array<{
+    stepId: string;
+    status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+    output: string;
+    durationMs: number;
+    error?: string;
+  }>;
+  startedAt: number;
+}
+
+interface ChannelStatusEvent {
+  channelId: string;
+  status: 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'error';
+  timestamp: number;
 }
 
 // ── IPC envelope ────────────────────────────────────────────────────
@@ -164,6 +197,11 @@ export const ipc = {
   sendMessage: (sessionId: string, content: string, options?: ChatSendOptions) =>
     invoke<{ messageId: string }>('chat:send', sessionId, content, options),
   abortChat: (sessionId: string) => invoke<boolean>('chat:abort', sessionId),
+  respondClarification: (params: {
+    clarificationId: string;
+    sessionId?: string;
+    answers?: Record<string, string>;
+  }) => invoke<boolean>('chat:clarification-response', params),
   chatHistory: (sessionId: string) => invoke<ChatMessage[]>('chat:history', sessionId),
   switchModel: (sessionId: string, providerId: string, modelId: string) =>
     invoke<boolean>('chat:switch-model', sessionId, providerId, modelId),
@@ -176,15 +214,22 @@ export const ipc = {
     invoke<boolean>('agents:set-model', agentType, providerId, modelId),
 
   // ─── Git ──────────────────────────────────────────────────────────
-  gitStatus: () => invoke<GitStatus>('git:status'),
-  gitDiff: (filePath?: string) => invoke<string>('git:diff', filePath),
-  gitCommit: (message: string) => invoke<{ commitHash: string }>('git:commit', message),
-  gitPush: () => invoke<boolean>('git:push'),
-  gitStage: (files: string[]) => invoke<boolean>('git:stage', files),
-  gitUnstage: (files: string[]) => invoke<boolean>('git:unstage', files),
-  gitRevert: (files: string[]) => invoke<boolean>('git:revert', files),
-  gitUndo: () => invoke<boolean>('git:undo'),
-  gitRedo: () => invoke<boolean>('git:redo'),
+  gitStatus: (workDirectory?: string) => invoke<GitStatus>('git:status', workDirectory),
+  gitDiff: (filePathOrStaged?: string | boolean, workDirectory?: string) =>
+    invoke<string>('git:diff', filePathOrStaged, workDirectory),
+  gitCommit: (message: string, workDirectory?: string) =>
+    invoke<{ commitHash: string }>('git:commit', message, workDirectory),
+  gitPush: (workDirectory?: string) => invoke<boolean>('git:push', workDirectory),
+  gitStage: (files: string[], workDirectory?: string) => invoke<boolean>('git:stage', files, workDirectory),
+  gitUnstage: (files: string[], workDirectory?: string) => invoke<boolean>('git:unstage', files, workDirectory),
+  gitRevert: (files: string[], workDirectory?: string) => invoke<boolean>('git:revert', files, workDirectory),
+  gitUndo: (snapshotRef?: string, workDirectory?: string) => invoke<boolean>('git:undo', snapshotRef, workDirectory),
+  gitRedo: (workDirectory?: string) => invoke<boolean>('git:redo', workDirectory),
+  gitWorktreeList: (workDirectory?: string) => invoke<GitWorktreeEntry[]>('git:worktree-list', workDirectory),
+  gitWorktreeCreate: (branch: string, path: string, workDirectory?: string) =>
+    invoke<{ path: string }>('git:worktree-create', branch, path, workDirectory),
+  gitWorktreeRemove: (path: string, workDirectory?: string) =>
+    invoke<boolean>('git:worktree-remove', path, workDirectory),
 
   // ─── Approval ─────────────────────────────────────────────────────
   respondApproval: (approvalId: string, approved: boolean) =>
@@ -207,7 +252,17 @@ export const ipc = {
 
   // ─── Skills ───────────────────────────────────────────────────────
   searchSkills: (query: string) => invoke<Record<string, unknown>[]>('skills:search', query),
+  generateSkill: (params: { requirement: string; providerId?: string; modelId?: string }) =>
+    invoke<{
+      manifest: Record<string, unknown>;
+      skillPrompt: string;
+      warnings: string[];
+      providerId: string;
+      modelId: string;
+    }>('skills:generate', params),
   installSkill: (id: string) => invoke<boolean>('skills:install', id),
+  installGeneratedSkill: (params: { manifest: Record<string, unknown>; skillPrompt: string }) =>
+    invoke<{ id: string }>('skills:install-generated', params),
   uninstallSkill: (id: string) => invoke<boolean>('skills:uninstall', id),
   listInstalledSkills: () => invoke<Record<string, unknown>[]>('skills:list'),
 
@@ -252,13 +307,34 @@ export const ipc = {
   memorySearch: (options: { query: string; maxResults?: number; minScore?: number; sessionId?: string | null }) =>
     invoke<Array<{ chunkId: string; content: string; score: number; source: string; sessionId: string | null; createdAt: string }>>('memory:search', options),
   memoryStats: () =>
-    invoke<{ totalChunks: number; totalSummaries: number; chunksWithEmbeddings: number; oldestChunkDate: string | null; newestChunkDate: string | null }>('memory:stats'),
+    invoke<{
+      totalChunks: number;
+      totalSummaries: number;
+      chunksWithEmbeddings: number;
+      oldestChunkDate: string | null;
+      newestChunkDate: string | null;
+      totalGraphEntities?: number;
+      totalGraphRelations?: number;
+      totalPreferenceObservations?: number;
+    }>('memory:stats'),
+  memoryPreferencesList: (sessionId?: string | null, limit?: number) =>
+    invoke<Array<{
+      id: string;
+      content: string;
+      category: 'preference' | 'fact' | 'constraint';
+      confidence: number;
+      sessionId: string | null;
+      sourceChunkId: string | null;
+      createdAt: string;
+      updatedAt: string;
+    }>>('memory:preferences:list', { sessionId: sessionId ?? null, limit }),
   memoryConfigGet: () =>
     invoke<{ compactRatio: number; keepRecentMessages: number; maxSearchResults: number; embeddingEnabled: boolean; vectorWeight: number; bm25Weight: number }>('memory:config:get'),
   memoryConfigSet: (key: string, value: string | number | boolean) =>
     invoke<boolean>('memory:config:set', key, value),
   memoryDelete: (chunkId: string) => invoke<boolean>('memory:delete', chunkId),
   memoryDeleteSession: (sessionId: string) => invoke<boolean>('memory:delete-session', sessionId),
+  memoryPreferenceDelete: (observationId: string) => invoke<boolean>('memory:preferences:delete', observationId),
   memoryReindex: () => invoke<{ indexed: number; reason?: string }>('memory:reindex'),
 
   // ─── App ──────────────────────────────────────────────────────────
@@ -279,14 +355,26 @@ export const ipc = {
 
   // ─── Event listeners (main → renderer) ────────────────────────────
   onChatStream: (callback: (event: CodingAgentEvent) => void): (() => void) | undefined => {
-    return window.electron?.ipcRenderer.on('chat:stream', (_event: unknown, data: unknown) =>
+    return window.electron?.ipcRenderer.on('chat:stream', (data: unknown) =>
       callback(data as CodingAgentEvent),
     );
   },
 
   onApprovalRequest: (callback: (request: ApprovalRequest) => void): (() => void) | undefined => {
-    return window.electron?.ipcRenderer.on('approval:request', (_event: unknown, data: unknown) =>
+    return window.electron?.ipcRenderer.on('approval:request', (data: unknown) =>
       callback(data as ApprovalRequest),
+    );
+  },
+
+  onOrchestratorProgress: (callback: (progress: OrchestratorProgressEvent) => void): (() => void) | undefined => {
+    return window.electron?.ipcRenderer.on('orchestrator:progress', (data: unknown) =>
+      callback(data as OrchestratorProgressEvent),
+    );
+  },
+
+  onChannelStatus: (callback: (event: ChannelStatusEvent) => void): (() => void) | undefined => {
+    return window.electron?.ipcRenderer.on('channels:status', (data: unknown) =>
+      callback(data as ChannelStatusEvent),
     );
   },
 };

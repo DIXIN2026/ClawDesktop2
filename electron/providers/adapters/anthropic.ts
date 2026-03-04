@@ -1,10 +1,28 @@
 /**
  * Anthropic Messages API Adapter
+ * Supports Prompt Caching for reduced latency and cost.
  */
+
+export interface CacheControl {
+  type: 'ephemeral';
+}
+
+export interface AnthropicContentBlock {
+  type: 'text' | 'image' | 'tool_use' | 'tool_result';
+  text?: string;
+  source?: { type: 'base64'; media_type: string; data: string };
+  cache_control?: CacheControl;
+}
 
 export interface AnthropicMessage {
   role: 'user' | 'assistant';
-  content: string | Array<{ type: string; text?: string; source?: unknown }>;
+  content: string | AnthropicContentBlock[];
+}
+
+export interface AnthropicSystemBlock {
+  type: 'text';
+  text: string;
+  cache_control?: CacheControl;
 }
 
 export interface AnthropicStreamEvent {
@@ -12,15 +30,39 @@ export interface AnthropicStreamEvent {
   delta?: { type: string; text?: string };
   content_block?: { type: string; text?: string };
   index?: number;
+  message?: {
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
+    };
+  };
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  };
 }
 
 export interface AnthropicRequestParams {
   model: string;
   messages: AnthropicMessage[];
   maxTokens: number;
-  system?: string;
+  system?: string | AnthropicSystemBlock[];
   stream?: boolean;
   tools?: unknown[];
+  /** Enable prompt caching for system prompt and large context blocks */
+  enableCaching?: boolean;
+}
+
+/** Minimum tokens for cache eligibility (Anthropic requirement) */
+const MIN_CACHE_TOKENS = 1024;
+
+/** Estimate tokens from text (rough approximation) */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
 }
 
 export async function* streamAnthropicMessages(
@@ -28,6 +70,41 @@ export async function* streamAnthropicMessages(
   apiKey: string,
   params: AnthropicRequestParams,
 ): AsyncIterable<AnthropicStreamEvent> {
+  const { enableCaching = true } = params;
+
+  let systemBlocks: AnthropicSystemBlock[] | undefined;
+  if (params.system) {
+    if (typeof params.system === 'string') {
+      const systemText = params.system;
+      const systemTokens = estimateTokens(systemText);
+      if (enableCaching && systemTokens >= MIN_CACHE_TOKENS) {
+        systemBlocks = [{ type: 'text', text: systemText, cache_control: { type: 'ephemeral' } }];
+      } else {
+        systemBlocks = [{ type: 'text', text: systemText }];
+      }
+    } else {
+      systemBlocks = params.system;
+    }
+  }
+
+  const processedMessages: AnthropicMessage[] = params.messages.map((msg) => {
+    if (!enableCaching || typeof msg.content === 'string') {
+      return msg;
+    }
+
+    const contentBlocks: AnthropicContentBlock[] = msg.content.map((block, idx, arr) => {
+      if (block.type === 'text' && block.text) {
+        const blockTokens = estimateTokens(block.text);
+        if (blockTokens >= MIN_CACHE_TOKENS && idx === arr.length - 1) {
+          return { ...block, cache_control: { type: 'ephemeral' } };
+        }
+      }
+      return block;
+    });
+
+    return { ...msg, content: contentBlocks };
+  });
+
   const response = await fetch(`${baseUrl}/v1/messages`, {
     method: 'POST',
     headers: {
@@ -37,9 +114,9 @@ export async function* streamAnthropicMessages(
     },
     body: JSON.stringify({
       model: params.model,
-      messages: params.messages,
+      messages: processedMessages,
       max_tokens: params.maxTokens,
-      system: params.system,
+      system: systemBlocks,
       stream: true,
       tools: params.tools,
     }),
@@ -78,3 +155,5 @@ export async function* streamAnthropicMessages(
     }
   }
 }
+
+export { MIN_CACHE_TOKENS, estimateTokens };
