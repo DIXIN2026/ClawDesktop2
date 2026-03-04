@@ -3,7 +3,8 @@
  * Exposes safe APIs to the renderer process via contextBridge
  * Whitelist pattern per requirements §4.1
  */
-import { contextBridge, ipcRenderer } from 'electron';
+declare const require: NodeRequire;
+const { contextBridge, ipcRenderer } = require('electron') as typeof import('electron');
 
 const VALID_INVOKE_CHANNELS = [
   // Engine
