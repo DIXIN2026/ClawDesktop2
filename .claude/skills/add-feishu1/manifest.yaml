@@ -1,0 +1,16 @@
+skill: feishu
+version: 1.0.0
+description: "Full-featured Feishu channel using OpenClaw plugin system — configures and activates the existing 40-file implementation"
+core_version: 0.1.0
+adds: []
+modifies:
+  - electron/channels/registration.ts
+structured:
+  env_additions:
+    - FEISHU_APP_ID
+    - FEISHU_APP_SECRET
+    - FEISHU_ENCRYPT_KEY
+    - FEISHU_VERIFICATION_TOKEN
+conflicts:
+  - feishu-lite
+depends: []

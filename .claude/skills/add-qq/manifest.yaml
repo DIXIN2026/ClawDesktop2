@@ -1,0 +1,8 @@
+skill: qq
+version: 1.0.0
+description: "QQ channel configuration wizard — no code changes, pure setup guidance"
+core_version: 0.1.0
+adds: []
+modifies: []
+conflicts: []
+depends: []

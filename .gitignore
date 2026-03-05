@@ -39,7 +39,8 @@ pnpm-debug.log*
 electron-builder-cache/
 
 # Claude
-.claude/
+#.claude/
+.claude/settings.json
 
 # Misc
 .cache/
@@ -49,6 +50,6 @@ tmp/
 *.tar.gz
 
 # Project specific
-.clawdesktop2-data/
-.clawdesktop2-session/
+#.clawdesktop2-data/
+#.clawdesktop2-session/
 release/

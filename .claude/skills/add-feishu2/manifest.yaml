@@ -1,0 +1,16 @@
+skill: feishu-lite
+version: 1.0.0
+description: "Lightweight Feishu channel — single account, WebSocket only, CoPaw-style simplicity"
+core_version: 0.1.0
+adds:
+  - electron/channels/feishu-lite/channel.ts
+  - electron/channels/feishu-lite/types.ts
+  - electron/channels/feishu-lite/index.ts
+modifies:
+  - electron/channels/registration.ts
+structured:
+  npm_dependencies:
+    "@larksuiteoapi/node-sdk": "^1.59.0"
+conflicts:
+  - feishu
+depends: []
