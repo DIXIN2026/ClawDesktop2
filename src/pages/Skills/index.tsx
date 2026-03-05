@@ -215,18 +215,20 @@ export function SkillsPage() {
   const filteredInstalled = filterByCategory(installedSkills);
 
   return (
-    <div className="h-full overflow-auto p-6">
-      <div className="max-w-5xl mx-auto">
+    <div className="page-shell">
+      <div className="page-container">
         {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <Puzzle className="h-6 w-6" />
-          <h1 className="text-2xl font-bold">技能商店</h1>
+        <div className="page-header">
+          <div className="flex items-center gap-3">
+            <Puzzle className="h-6 w-6" />
+            <h1 className="text-2xl font-bold">技能商店</h1>
+          </div>
+          <p className="text-muted-foreground mt-2">
+            从 ClawHub 市场浏览和安装技能，扩展智能体能力。
+          </p>
         </div>
-        <p className="text-muted-foreground mb-6">
-          从 ClawHub 市场浏览和安装技能，扩展智能体能力。
-        </p>
 
-        <Card className="mb-6">
+        <Card className="panel-surface">
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <Sparkles className="h-4 w-4" />
@@ -309,7 +311,8 @@ export function SkillsPage() {
         </Card>
 
         {/* Search */}
-        <div className="relative mb-6">
+        <div className="panel-surface p-4">
+          <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="搜索技能..."
@@ -318,10 +321,11 @@ export function SkillsPage() {
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
+        </div>
 
         {/* Category Tabs */}
         <Tabs value={activeCategory} onValueChange={(v) => setActiveCategory(v as CategoryValue)}>
-          <TabsList className="mb-6">
+          <TabsList className="mb-4 rounded-xl border border-border/70 bg-card/70 p-1">
             {CATEGORIES.map((cat) => {
               const Icon = cat.icon;
               return (
@@ -336,7 +340,7 @@ export function SkillsPage() {
           {/* Installed Skills Section */}
           <TabsContent value={activeCategory} forceMount>
             {filteredInstalled.length > 0 && (
-              <div className="mb-8">
+              <div className="mb-8 panel-surface p-4">
                 <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
                   <Package className="h-5 w-5" />
                   已安装 ({filteredInstalled.length})
@@ -364,7 +368,7 @@ export function SkillsPage() {
                   {loading && <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />}
                 </h2>
                 {filteredMarket.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                     {filteredMarket.map((skill) => (
                       <SkillCard
                         key={skill.id}
@@ -377,7 +381,7 @@ export function SkillsPage() {
                     ))}
                   </div>
                 ) : !loading ? (
-                  <div className="text-center text-muted-foreground py-12">
+                  <div className="panel-surface py-12 text-center text-muted-foreground">
                     未找到匹配的技能。尝试其他搜索词。
                   </div>
                 ) : null}
@@ -386,7 +390,7 @@ export function SkillsPage() {
 
             {/* Empty state */}
             {!searchQuery.trim() && filteredInstalled.length === 0 && (
-              <div className="text-center text-muted-foreground py-20">
+              <div className="panel-surface py-20 text-center text-muted-foreground">
                 尚未安装任何技能。使用搜索栏浏览 ClawHub 市场。
               </div>
             )}
@@ -411,7 +415,7 @@ interface SkillCardProps {
 
 function SkillCard({ skill, installed, installing, onInstall, onUninstall }: SkillCardProps) {
   return (
-    <Card className="flex flex-col">
+    <Card className="panel-surface flex flex-col transition-all hover:-translate-y-0.5 hover:shadow-md">
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between">
           <CardTitle className="text-base">{skill.name}</CardTitle>

@@ -65,7 +65,7 @@ async function scanLocalServices(): Promise<{ providers: DiscoveredProvider[]; o
   // Check Ollama on localhost:11434
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
+    const timeout = setTimeout(() => controller.abort(), 1200);
     const response = await fetch('http://localhost:11434/api/version', {
       signal: controller.signal,
     });
@@ -81,7 +81,7 @@ async function scanLocalServices(): Promise<{ providers: DiscoveredProvider[]; o
       // Fetch available models
       try {
         const tagsController = new AbortController();
-        const tagsTimeout = setTimeout(() => tagsController.abort(), 5000);
+        const tagsTimeout = setTimeout(() => tagsController.abort(), 1800);
         const tagsResponse = await fetch('http://localhost:11434/api/tags', {
           signal: tagsController.signal,
         });
@@ -105,9 +105,9 @@ function detectCliTool(command: string): { installed: boolean; version?: string 
   try {
     const which = process.platform === 'win32' ? 'where' : 'which';
     // Use execFileSync to avoid shell interpolation
-    execFileSync(which, [command], { timeout: 5000, encoding: 'utf-8' });
+    execFileSync(which, [command], { timeout: 1200, encoding: 'utf-8' });
     try {
-      const version = execFileSync(command, ['--version'], { timeout: 5000, encoding: 'utf-8' }).trim();
+      const version = execFileSync(command, ['--version'], { timeout: 800, encoding: 'utf-8' }).trim();
       return { installed: true, version };
     } catch {
       return { installed: true };

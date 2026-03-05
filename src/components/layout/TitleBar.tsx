@@ -8,7 +8,7 @@ export function TitleBar() {
   const handleClose = () => window.electron?.ipcRenderer.invoke('window:close');
 
   return (
-    <div className="drag-region h-10 flex items-center justify-between bg-background border-b border-border shrink-0">
+    <div className="drag-region flex h-10 shrink-0 items-center justify-between border-b border-border/70 bg-background/80 backdrop-blur">
       {/* macOS: leave space for traffic lights */}
       {isMac && <div className="w-[72px] shrink-0" />}
 
@@ -21,19 +21,19 @@ export function TitleBar() {
         <div className="no-drag flex items-center">
           <button
             onClick={handleMinimize}
-            className="h-10 w-11 flex items-center justify-center hover:bg-muted transition-colors"
+            className="flex h-10 w-11 items-center justify-center rounded-md transition-colors hover:bg-muted"
           >
             <Minus className="h-4 w-4" />
           </button>
           <button
             onClick={handleMaximize}
-            className="h-10 w-11 flex items-center justify-center hover:bg-muted transition-colors"
+            className="flex h-10 w-11 items-center justify-center rounded-md transition-colors hover:bg-muted"
           >
             <Square className="h-3.5 w-3.5" />
           </button>
           <button
             onClick={handleClose}
-            className="h-10 w-11 flex items-center justify-center hover:bg-destructive hover:text-destructive-foreground transition-colors"
+            className="flex h-10 w-11 items-center justify-center rounded-md transition-colors hover:bg-destructive hover:text-destructive-foreground"
           >
             <X className="h-4 w-4" />
           </button>

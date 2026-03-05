@@ -35,9 +35,10 @@ const STEPS = [
 
 export function SetupPage() {
   const [step, setStep] = useState(0);
+  const [nextLocked, setNextLocked] = useState(false);
   const navigate = useNavigate();
   const { completeSetup, setWorkDirectory, setContainerRuntime, workDirectory } = useSettingsStore();
-  const { providers, discovered, cliAgents, runDiscovery, isDiscovering, selectedCliBackend, setSelectedCliBackend } = useProvidersStore();
+  const { providers, discovered, cliAgents, runDiscovery, isDiscovering, selectedCliBackend } = useProvidersStore();
   const [containerStatus, setContainerStatus] = useState<'checking' | 'docker' | 'apple-container' | 'none'>('checking');
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
 
@@ -112,6 +113,14 @@ export function SetupPage() {
   };
 
   const progress = ((step + 1) / STEPS.length) * 100;
+  const isNextDisabled = nextLocked;
+
+  const handleNext = () => {
+    if (isNextDisabled) return;
+    setNextLocked(true);
+    setStep((prev) => Math.min(STEPS.length - 1, prev + 1));
+    window.setTimeout(() => setNextLocked(false), 300);
+  };
 
   return (
     <div className="h-screen flex flex-col bg-background">
@@ -188,7 +197,7 @@ export function SetupPage() {
                 </div>
               )}
 
-              {!isDiscovering && discovered.length > 0 && (
+              {discovered.length > 0 && (
                 <Card className="border-green-500/30 bg-green-500/5">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm flex items-center gap-2">
@@ -207,8 +216,7 @@ export function SetupPage() {
                 </Card>
               )}
 
-              {!isDiscovering && (
-                <Tabs defaultValue="api-key">
+              <Tabs defaultValue="api-key">
                   <TabsList className="w-full grid grid-cols-3">
                     <TabsTrigger value="api-key" className="flex items-center gap-1.5">
                       <Key className="h-3.5 w-3.5" />
@@ -323,31 +331,22 @@ export function SetupPage() {
                   {/* CLI Agents */}
                   <TabsContent value="cli" className="space-y-3 mt-4">
                     <p className="text-xs text-muted-foreground mb-2">
-                      编码智能体默认使用本地 CLI 工具。请选择一个作为编码后端。
+                      编码智能体会自动识别已安装的 CLI 并默认启用。后续可在设置里切换或关闭。
                     </p>
                     {cliAgents.length > 0 ? (
                       <>
                         {cliAgents.map((agent) => {
-                          const isSelected = selectedCliBackend === agent.id;
-                          const canSelect = agent.installed;
+                          const isAutoEnabled = agent.installed && selectedCliBackend === agent.id;
                           return (
                             <Card
                               key={agent.id}
                               className={cn(
                                 'transition-colors',
-                                canSelect ? 'cursor-pointer hover:border-primary/50' : 'opacity-50',
-                                isSelected && 'border-primary bg-primary/5',
+                                agent.installed ? 'border-primary/30 bg-primary/5' : 'opacity-50',
                               )}
-                              onClick={() => { if (canSelect) setSelectedCliBackend(isSelected ? null : agent.id); }}
                             >
                               <CardContent className="flex items-center justify-between py-3 px-4">
                                 <div className="flex items-center gap-3">
-                                  <div className={cn(
-                                    'w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0',
-                                    isSelected ? 'border-primary bg-primary' : 'border-muted-foreground/30',
-                                  )}>
-                                    {isSelected && <Check className="h-3 w-3 text-primary-foreground" />}
-                                  </div>
                                   <div>
                                     <p className="text-sm font-medium">{agent.name}</p>
                                     <p className="text-xs text-muted-foreground">
@@ -357,8 +356,8 @@ export function SetupPage() {
                                   </div>
                                 </div>
                                 {agent.installed ? (
-                                  <Badge variant={isSelected ? 'default' : 'outline'} className="text-xs">
-                                    {isSelected ? '已选择' : '已安装'}
+                                  <Badge variant={isAutoEnabled ? 'default' : 'outline'} className="text-xs">
+                                    {isAutoEnabled ? '自动启用' : '已安装'}
                                   </Badge>
                                 ) : (
                                   <Badge variant="secondary" className="text-xs">
@@ -370,11 +369,9 @@ export function SetupPage() {
                             </Card>
                           );
                         })}
-                        {!selectedCliBackend && (
-                          <p className="text-xs text-muted-foreground text-center">
-                            点击已安装的工具将其设为编码智能体后端
-                          </p>
-                        )}
+                        <p className="text-xs text-muted-foreground text-center">
+                          无需在启动向导手动配置 CLI
+                        </p>
                       </>
                     ) : (
                       <Card>
@@ -389,7 +386,6 @@ export function SetupPage() {
                     )}
                   </TabsContent>
                 </Tabs>
-              )}
 
               <p className="text-xs text-muted-foreground text-center pt-2">
                 可以跳过此步骤，稍后在「设置 → 模型供应商」中配置。
@@ -518,8 +514,8 @@ export function SetupPage() {
         </Button>
 
         {step < STEPS.length - 1 ? (
-          <Button onClick={() => setStep(step + 1)}>
-            下一步
+          <Button onClick={handleNext} disabled={isNextDisabled}>
+            {step === 1 && isDiscovering ? '正在扫描...' : '下一步'}
             <ChevronRight className="h-4 w-4 ml-2" />
           </Button>
         ) : (

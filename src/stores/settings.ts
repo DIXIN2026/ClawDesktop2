@@ -18,7 +18,7 @@ export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
       theme: 'dark',
-      language: 'en',
+      language: 'zh-CN',
       setupComplete: false,
       workDirectory: '',
       containerRuntime: 'none',
@@ -28,6 +28,19 @@ export const useSettingsStore = create<SettingsState>()(
       setWorkDirectory: (dir) => set({ workDirectory: dir }),
       setContainerRuntime: (runtime) => set({ containerRuntime: runtime }),
     }),
-    { name: 'clawdesktop2-settings' },
+    {
+      name: 'clawdesktop2-settings',
+      version: 2,
+      migrate: (persistedState, version) => {
+        if (!persistedState || typeof persistedState !== 'object') {
+          return persistedState as SettingsState;
+        }
+        const state = persistedState as SettingsState;
+        if (version < 2 && state.language === 'en') {
+          return { ...state, language: 'zh-CN' };
+        }
+        return state;
+      },
+    },
   ),
 );

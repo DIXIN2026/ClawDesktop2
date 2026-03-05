@@ -77,33 +77,33 @@ function AgentCard({ agent, onSelect, selected }: {
   return (
     <div
       onClick={() => onSelect(agent.id)}
-      className={`p-4 rounded-lg border cursor-pointer transition-all ${
+      className={`cursor-pointer rounded-xl border p-4 transition-all ${
         selected
-          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-          : 'border-zinc-200 dark:border-zinc-700 hover:border-zinc-300'
+          ? 'border-primary/40 bg-accent/80 shadow-sm'
+          : 'border-border/70 bg-card/65 hover:border-border hover:bg-accent/40'
       }`}
     >
       <div className="flex items-center gap-3 mb-2">
-        <div className={`p-2 rounded-lg ${selected ? 'bg-blue-100 dark:bg-blue-800' : 'bg-zinc-100 dark:bg-zinc-800'}`}>
-          <Icon className={`w-5 h-5 ${selected ? 'text-blue-600' : 'text-zinc-600 dark:text-zinc-300'}`} />
+        <div className={`rounded-lg p-2 ${selected ? 'bg-primary/15' : 'bg-muted'}`}>
+          <Icon className={`w-5 h-5 ${selected ? 'text-primary' : 'text-muted-foreground'}`} />
         </div>
         <div>
-          <h3 className="font-medium text-sm text-zinc-900 dark:text-zinc-100">{label}</h3>
-          <p className="text-xs text-zinc-500">{desc}</p>
+          <h3 className="text-sm font-medium">{label}</h3>
+          <p className="text-xs text-muted-foreground">{desc}</p>
         </div>
       </div>
       <div className="flex items-center justify-between">
         <div className="flex gap-1">
           {agent.skills.slice(0, 3).map((s) => (
-            <span key={s} className="text-xs px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-700 text-zinc-500">
+            <span key={s} className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
               {s}
             </span>
           ))}
         </div>
-        <span className={`text-xs px-2 py-0.5 rounded-full ${
-          agent.status === 'running' ? 'bg-green-100 text-green-700' :
-          agent.status === 'error' ? 'bg-red-100 text-red-700' :
-          'bg-zinc-100 text-zinc-500'
+        <span className={`rounded-full px-2 py-0.5 text-xs ${
+          agent.status === 'running' ? 'bg-green-500/15 text-green-600' :
+          agent.status === 'error' ? 'bg-red-500/15 text-red-600' :
+          'bg-muted text-muted-foreground'
         }`}>
           {agent.status === 'running' ? '运行中' : agent.status === 'error' ? '错误' : '就绪'}
         </span>
@@ -126,25 +126,25 @@ function AgentConfigPanel({ agent, onUpdate }: {
 
   return (
     <div className="space-y-4">
-      <h3 className="font-medium text-zinc-900 dark:text-zinc-100">
+      <h3 className="font-medium">
         <Settings2 className="w-4 h-4 inline-block mr-2" />
         {AGENT_LABELS[agent.type]} 配置
       </h3>
       <div>
-        <label className="text-xs text-zinc-500 mb-1 block">系统提示词</label>
+        <label className="mb-1 block text-xs text-muted-foreground">系统提示词</label>
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           onBlur={() => { if (prompt !== (agent.systemPrompt ?? '')) onUpdate(agent.id, { systemPrompt: prompt }); }}
           rows={5}
-          className="w-full text-sm border border-zinc-200 dark:border-zinc-700 rounded-lg p-3 bg-transparent resize-none"
+          className="w-full resize-none rounded-lg border border-border/80 bg-background/70 p-3 text-sm"
         />
       </div>
       <div>
-        <label className="text-xs text-zinc-500 mb-1 block">技能列表</label>
+        <label className="mb-1 block text-xs text-muted-foreground">技能列表</label>
         <div className="flex flex-wrap gap-1.5">
           {agent.skills.map((s) => (
-            <span key={s} className="text-xs px-2 py-1 rounded-full bg-blue-50 dark:bg-blue-900/30 text-blue-600 border border-blue-200 dark:border-blue-700">
+            <span key={s} className="rounded-full border border-primary/25 bg-primary/10 px-2 py-1 text-xs text-primary">
               {s}
             </span>
           ))}
@@ -152,8 +152,8 @@ function AgentConfigPanel({ agent, onUpdate }: {
       </div>
       {agent.defaultModel && (
         <div>
-          <label className="text-xs text-zinc-500 mb-1 block">默认模型</label>
-          <p className="text-sm text-zinc-700 dark:text-zinc-300">
+          <label className="mb-1 block text-xs text-muted-foreground">默认模型</label>
+          <p className="text-sm text-muted-foreground">
             {agent.defaultModel.providerId} / {agent.defaultModel.modelId}
           </p>
         </div>
@@ -194,7 +194,7 @@ function PipelineEditor({ pipeline, progress, onChange, onDelete, onRun }: {
   return (
     <div className="space-y-4">
       {progress && (
-        <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 p-3 space-y-2">
+        <div className="space-y-2 rounded-xl border border-border/70 bg-card/70 p-3">
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium">执行进度</span>
             <span className={`text-xs px-2 py-0.5 rounded-full ${
@@ -209,7 +209,7 @@ function PipelineEditor({ pipeline, progress, onChange, onDelete, onRun }: {
           </div>
           <div className="space-y-1">
             {progress.results.map((result) => (
-              <div key={result.stepId} className="text-xs flex items-center justify-between text-zinc-600 dark:text-zinc-300">
+              <div key={result.stepId} className="flex items-center justify-between text-xs text-muted-foreground">
                 <span className="truncate pr-2">{result.stepId}</span>
                 <span className={`shrink-0 ${
                   result.status === 'completed' ? 'text-green-600'
@@ -229,14 +229,14 @@ function PipelineEditor({ pipeline, progress, onChange, onDelete, onRun }: {
         <input
           value={pipeline.name}
           onChange={(e) => onChange({ ...pipeline, name: e.target.value })}
-          className="text-lg font-semibold bg-transparent border-none outline-none text-zinc-900 dark:text-zinc-100"
+          className="text-lg font-semibold bg-transparent border-none outline-none"
           placeholder="流水线名称"
         />
         <div className="flex gap-2">
-          <button onClick={onRun} className="flex items-center gap-1 px-3 py-1.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700">
+          <button onClick={onRun} className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90">
             <Play className="w-4 h-4" /> 运行
           </button>
-          <button onClick={onDelete} className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded">
+          <button onClick={onDelete} className="rounded p-1.5 text-destructive hover:bg-destructive/10">
             <Trash2 className="w-4 h-4" />
           </button>
         </div>
@@ -250,19 +250,19 @@ function PipelineEditor({ pipeline, progress, onChange, onDelete, onRun }: {
                 <ArrowRight className="w-4 h-4 text-zinc-400 rotate-90" />
               </div>
             )}
-            <div className="border border-zinc-200 dark:border-zinc-700 rounded-lg p-3">
+            <div className="rounded-lg border border-border/70 bg-card/65 p-3">
               <div className="flex items-center gap-3 mb-2">
-                <span className="text-xs text-zinc-400 font-mono">#{idx + 1}</span>
+                <span className="font-mono text-xs text-muted-foreground">#{idx + 1}</span>
                 <select
                   value={step.agentType}
                   onChange={(e) => updateStep(step.id, { agentType: e.target.value as AgentType })}
-                  className="text-sm border border-zinc-200 dark:border-zinc-600 rounded px-2 py-1 bg-transparent"
+                  className="rounded border border-border/80 bg-background/70 px-2 py-1 text-sm"
                 >
                   {Object.entries(AGENT_LABELS).map(([k, v]) => (
                     <option key={k} value={k}>{v}</option>
                   ))}
                 </select>
-                <button onClick={() => removeStep(step.id)} className="ml-auto p-1 text-zinc-400 hover:text-red-500">
+                <button onClick={() => removeStep(step.id)} className="ml-auto p-1 text-muted-foreground hover:text-destructive">
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -271,7 +271,7 @@ function PipelineEditor({ pipeline, progress, onChange, onDelete, onRun }: {
                 onChange={(e) => updateStep(step.id, { prompt: e.target.value })}
                 placeholder="任务描述..."
                 rows={2}
-                className="w-full text-sm bg-transparent border border-zinc-200 dark:border-zinc-700 rounded p-2 resize-none"
+                className="w-full resize-none rounded border border-border/80 bg-background/70 p-2 text-sm"
               />
             </div>
           </div>
@@ -280,7 +280,7 @@ function PipelineEditor({ pipeline, progress, onChange, onDelete, onRun }: {
 
       <button
         onClick={addStep}
-        className="flex items-center gap-1.5 w-full justify-center py-2 border-2 border-dashed border-zinc-300 dark:border-zinc-600 rounded-lg text-zinc-500 hover:text-zinc-700 hover:border-zinc-400 text-sm"
+        className="flex w-full items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-border/80 py-2 text-sm text-muted-foreground hover:border-primary/40 hover:text-foreground"
       >
         <Plus className="w-4 h-4" /> 添加步骤
       </button>
@@ -353,21 +353,22 @@ export default function AgentsPage() {
   }, [defaultWorkDirectory]);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="page-shell">
+      <div className="page-container h-full max-w-none space-y-3">
       {/* Tab bar */}
-      <div className="flex items-center gap-4 px-4 py-3 border-b border-zinc-200 dark:border-zinc-700">
+      <div className="panel-surface flex items-center gap-3 px-4 py-3">
         <button
           onClick={() => setActiveTab('agents')}
-          className={`flex items-center gap-1.5 text-sm font-medium pb-1 border-b-2 ${
-            activeTab === 'agents' ? 'border-blue-500 text-blue-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'
+          className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-all ${
+            activeTab === 'agents' ? 'border-primary/30 bg-accent text-primary' : 'border-transparent text-muted-foreground hover:border-border/70 hover:bg-accent/40'
           }`}
         >
           <Bot className="w-4 h-4" /> 智能体
         </button>
         <button
           onClick={() => setActiveTab('pipelines')}
-          className={`flex items-center gap-1.5 text-sm font-medium pb-1 border-b-2 ${
-            activeTab === 'pipelines' ? 'border-blue-500 text-blue-600' : 'border-transparent text-zinc-500 hover:text-zinc-700'
+          className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-all ${
+            activeTab === 'pipelines' ? 'border-primary/30 bg-accent text-primary' : 'border-transparent text-muted-foreground hover:border-border/70 hover:bg-accent/40'
           }`}
         >
           <Workflow className="w-4 h-4" /> 编排流水线
@@ -375,10 +376,10 @@ export default function AgentsPage() {
       </div>
 
       {activeTab === 'agents' ? (
-        <div className="flex flex-1 overflow-hidden">
+        <div className="panel-surface flex flex-1 overflow-hidden">
           {/* Agent grid */}
-          <div className="flex-1 p-4 overflow-y-auto">
-            <div className="grid grid-cols-2 gap-3">
+          <div className="flex-1 overflow-y-auto p-4">
+            <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
               {agents.map((agent) => (
                 <AgentCard
                   key={agent.id}
@@ -392,7 +393,7 @@ export default function AgentsPage() {
 
           {/* Config panel */}
           {selected && (
-            <div className="w-[360px] border-l border-zinc-200 dark:border-zinc-700 p-4 overflow-y-auto">
+            <div className="w-[360px] border-l border-border/70 bg-background/60 p-4 overflow-y-auto">
               <AgentConfigPanel
                 agent={selected}
                 onUpdate={(id, updates) => updateAgent(id, updates)}
@@ -401,12 +402,12 @@ export default function AgentsPage() {
           )}
         </div>
       ) : (
-        <div className="flex flex-1 overflow-hidden">
+        <div className="panel-surface flex flex-1 overflow-hidden">
           {/* Pipeline list */}
-          <div className="w-[240px] border-r border-zinc-200 dark:border-zinc-700 p-3 space-y-2 overflow-y-auto">
+          <div className="w-[240px] border-r border-border/70 bg-background/60 p-3 space-y-2 overflow-y-auto">
             <button
               onClick={createPipeline}
-              className="flex items-center gap-1.5 w-full justify-center py-2 text-sm text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg"
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-border/70 py-2 text-sm text-primary hover:bg-accent/50"
             >
               <Plus className="w-4 h-4" /> 新建流水线
             </button>
@@ -416,8 +417,8 @@ export default function AgentsPage() {
                 onClick={() => setSelectedPipeline(p.id)}
                 className={`p-2.5 rounded-lg cursor-pointer text-sm ${
                   selectedPipeline === p.id
-                    ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600'
-                    : 'hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300'
+                    ? 'border border-primary/30 bg-accent text-primary'
+                    : 'border border-transparent text-foreground hover:border-border/70 hover:bg-accent/40'
                 }`}
               >
                 <div className="flex items-center gap-2">
@@ -425,7 +426,7 @@ export default function AgentsPage() {
                   <span className="truncate">{p.name}</span>
                 </div>
                 <div className="ml-6 flex items-center gap-2">
-                  <span className="text-xs text-zinc-400">{p.steps.length} 步骤</span>
+                  <span className="text-xs text-muted-foreground">{p.steps.length} 步骤</span>
                   {pipelineProgress[p.id] && (
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
                       pipelineProgress[p.id].status === 'running' ? 'bg-blue-100 text-blue-700'
@@ -457,7 +458,7 @@ export default function AgentsPage() {
                 onRun={() => handleRunPipeline(selectedPipe)}
               />
             ) : (
-              <div className="flex flex-col items-center justify-center h-full text-zinc-400">
+              <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
                 <Workflow className="w-12 h-12 mb-3 opacity-30" />
                 <p className="text-sm">选择或创建一个编排流水线</p>
                 <p className="text-xs mt-1">支持多智能体顺序/并行执行</p>
@@ -466,6 +467,7 @@ export default function AgentsPage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

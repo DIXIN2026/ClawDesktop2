@@ -211,41 +211,43 @@ export function ChatPage() {
   );
 
   return (
-    <div className="h-full flex">
+    <div className="flex h-full bg-background">
       {/* Left sidebar - Session list */}
       <div
         className={cn(
-          'border-r border-border bg-background/50 transition-all duration-200 shrink-0',
-          showSidebar ? 'w-64' : 'w-0 overflow-hidden',
+          'shrink-0 transition-all duration-200',
+          showSidebar ? 'w-72 p-3 pr-2' : 'w-0 overflow-hidden p-0',
         )}
       >
-        <SessionList
-          sessions={sessions}
-          currentId={currentSessionId}
-          onSelect={handleSelectSession}
-          onCreate={() => void handleCreateSession()}
-          onDelete={handleDeleteSession}
-          worktrees={worktrees}
-          currentWorktreePath={currentSession?.workDirectory ?? null}
-          onWorktreeRefresh={() => void loadWorktrees()}
-          onWorktreeCreate={handleWorktreeCreate}
-          onWorktreeDelete={handleWorktreeDelete}
-          onWorktreeStartChat={handleWorktreeStartChat}
-          defaultWorktreeBase={currentSession?.workDirectory ?? defaultWorkDirectory ?? null}
-        />
+        <div className="h-full overflow-hidden rounded-2xl border border-border/70 bg-card/60 shadow-sm backdrop-blur">
+          <SessionList
+            sessions={sessions}
+            currentId={currentSessionId}
+            onSelect={handleSelectSession}
+            onCreate={() => void handleCreateSession()}
+            onDelete={handleDeleteSession}
+            worktrees={worktrees}
+            currentWorktreePath={currentSession?.workDirectory ?? null}
+            onWorktreeRefresh={() => void loadWorktrees()}
+            onWorktreeCreate={handleWorktreeCreate}
+            onWorktreeDelete={handleWorktreeDelete}
+            onWorktreeStartChat={handleWorktreeStartChat}
+            defaultWorktreeBase={currentSession?.workDirectory ?? defaultWorkDirectory ?? null}
+          />
+        </div>
       </div>
 
       {/* Center: Chat panel */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex min-w-0 flex-1 flex-col">
         {/* Top bar */}
-        <div className="h-12 flex items-center justify-between px-3 border-b border-border shrink-0 gap-2">
+        <div className="mx-4 mb-2 mt-4 flex shrink-0 items-center justify-between gap-2 rounded-2xl border border-border/70 bg-card/60 px-3 py-2 shadow-sm backdrop-blur">
           <div className="flex items-center gap-2">
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8"
+              className="h-8 w-8 rounded-lg"
               onClick={() => setShowSidebar(!showSidebar)}
-              title={showSidebar ? 'Hide sidebar' : 'Show sidebar'}
+              title={showSidebar ? '隐藏侧栏' : '显示侧栏'}
             >
               {showSidebar ? (
                 <PanelLeftClose className="h-4 w-4" />
@@ -263,7 +265,7 @@ export function ChatPage() {
                 setCurrentSessionAgent(next);
               }}
             >
-              <SelectTrigger className="w-44 h-8 text-xs">
+              <SelectTrigger className="h-9 w-44 rounded-lg border-border/70 bg-background/80 text-xs shadow-none">
                 <div className="flex items-center gap-2">
                   {AGENT_TYPE_ICONS[currentAgentType]}
                   <SelectValue />
@@ -286,8 +288,8 @@ export function ChatPage() {
             {/* Model selector */}
             {availableModels.length > 0 && (
               <Select value={selectedModel} onValueChange={handleModelChange}>
-                <SelectTrigger className="w-52 h-8 text-xs">
-                  <SelectValue placeholder="Select model..." />
+                <SelectTrigger className="h-9 w-56 rounded-lg border-border/70 bg-background/80 text-xs shadow-none">
+                  <SelectValue placeholder="选择模型..." />
                 </SelectTrigger>
                 <SelectContent>
                   {availableModels.map((m) => (
@@ -302,9 +304,9 @@ export function ChatPage() {
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8"
+              className="h-8 w-8 rounded-lg"
               onClick={() => setShowReviewPanel(!showReviewPanel)}
-              title={showReviewPanel ? 'Hide review panel' : 'Show review panel'}
+              title={showReviewPanel ? '隐藏评审面板' : '显示评审面板'}
             >
               {showReviewPanel ? (
                 <PanelRightClose className="h-4 w-4" />

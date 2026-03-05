@@ -30,7 +30,7 @@ interface AgentsState {
 const PRESET_AGENTS: AgentConfig[] = [
   {
     id: 'agent-coding',
-    name: 'Coding Agent',
+    name: '编码智能体',
     type: 'coding',
     systemPrompt: 'You are an expert software engineer. Write clean, well-tested code.',
     skills: ['file-edit', 'terminal', 'browser', 'git'],
@@ -38,7 +38,7 @@ const PRESET_AGENTS: AgentConfig[] = [
   },
   {
     id: 'agent-requirements',
-    name: 'Requirements Agent',
+    name: '需求智能体',
     type: 'requirements',
     systemPrompt: 'You are a product manager. Analyze requirements, write specs, and break down tasks.',
     skills: ['file-edit', 'browser'],
@@ -46,7 +46,7 @@ const PRESET_AGENTS: AgentConfig[] = [
   },
   {
     id: 'agent-design',
-    name: 'Design Agent',
+    name: '设计智能体',
     type: 'design',
     systemPrompt: 'You are a UI/UX designer. Create design specs, review layouts, and suggest improvements.',
     skills: ['file-edit', 'browser'],
@@ -54,7 +54,7 @@ const PRESET_AGENTS: AgentConfig[] = [
   },
   {
     id: 'agent-testing',
-    name: 'Testing Agent',
+    name: '测试智能体',
     type: 'testing',
     systemPrompt: 'You are a QA engineer. Write tests, find bugs, and validate functionality.',
     skills: ['file-edit', 'terminal', 'browser'],

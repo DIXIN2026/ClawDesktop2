@@ -30,6 +30,7 @@
 
   --animate-accordion-down: accordion-down 0.2s ease-out;
   --animate-accordion-up: accordion-up 0.2s ease-out;
+  --animate-active-glow: active-glow 2.8s ease-in-out infinite;
 
   @keyframes accordion-down {
     from { height: 0; }
@@ -39,6 +40,30 @@
   @keyframes accordion-up {
     from { height: var(--radix-accordion-content-height); }
     to { height: 0; }
+  }
+
+  @keyframes active-glow {
+    0% {
+      box-shadow:
+        inset 0 1px 0 hsl(var(--background) / 0.82),
+        inset 0 0 0 1px hsl(var(--primary) / 0.16),
+        0 0 0 1px hsl(var(--primary) / 0.08),
+        0 10px 24px -18px hsl(var(--primary) / 0.62);
+    }
+    50% {
+      box-shadow:
+        inset 0 1px 0 hsl(var(--background) / 0.88),
+        inset 0 0 0 1px hsl(var(--primary) / 0.2),
+        0 0 0 1px hsl(var(--primary) / 0.14),
+        0 12px 28px -18px hsl(var(--primary) / 0.78);
+    }
+    100% {
+      box-shadow:
+        inset 0 1px 0 hsl(var(--background) / 0.82),
+        inset 0 0 0 1px hsl(var(--primary) / 0.16),
+        0 0 0 1px hsl(var(--primary) / 0.08),
+        0 10px 24px -18px hsl(var(--primary) / 0.62);
+    }
   }
 }
 
@@ -62,8 +87,10 @@
   --border: 214.3 31.8% 91.4%;
   --input: 214.3 31.8% 91.4%;
   --ring: 221.2 83.2% 53.3%;
-  --radius: 0.5rem;
-  --sidebar-width: 56px;
+  --radius: 0.875rem;
+  --sidebar-width: 72px;
+  --motion-hover-duration: 160ms;
+  --motion-hover-ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .dark {
@@ -92,10 +119,42 @@
   * {
     @apply border-border;
   }
+  :where(
+    button,
+    a,
+    [role='button'],
+    input,
+    textarea,
+    select,
+    .page-header,
+    .panel-surface
+  ) {
+    transition-property: background-color, border-color, color, box-shadow, transform, opacity;
+    transition-duration: var(--motion-hover-duration);
+    transition-timing-function: var(--motion-hover-ease);
+  }
+  :where(button, a, [role='button']):where(:not(:disabled)):active {
+    transform: translateY(1px) scale(0.985);
+  }
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
     overflow: hidden;
+    background-image:
+      radial-gradient(circle at 0% 0%, hsl(var(--primary) / 0.08), transparent 35%),
+      radial-gradient(circle at 100% 100%, hsl(var(--primary) / 0.06), transparent 30%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(button, a, [role='button'], input, textarea, select, .page-header, .panel-surface) {
+    transition-duration: 0ms;
+  }
+  :where(button, a, [role='button']):where(:not(:disabled)):active {
+    transform: none;
+  }
+  .sidebar-active-glow {
+    animation: none;
   }
 }
 
@@ -168,4 +227,26 @@
 
 .prose pre code {
   @apply bg-transparent p-0;
+}
+
+@layer components {
+  .page-shell {
+    @apply h-full overflow-auto p-4;
+  }
+
+  .page-container {
+    @apply mx-auto max-w-6xl space-y-4;
+  }
+
+  .page-header {
+    @apply rounded-2xl border border-border/70 bg-card/60 p-5 shadow-sm backdrop-blur;
+  }
+
+  .panel-surface {
+    @apply rounded-2xl border border-border/70 bg-card/60 shadow-sm backdrop-blur;
+  }
+
+  .sidebar-active-glow {
+    animation: var(--animate-active-glow);
+  }
 }

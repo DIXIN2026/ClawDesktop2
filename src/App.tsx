@@ -13,13 +13,17 @@ import { useSettingsStore } from './stores/settings';
 import { useEffect } from 'react';
 
 export default function App() {
-  const { theme, setupComplete } = useSettingsStore();
+  const { theme, language, setupComplete } = useSettingsStore();
 
   useEffect(() => {
     const root = document.documentElement;
     root.classList.toggle('dark', theme === 'dark');
     root.classList.toggle('light', theme === 'light');
   }, [theme]);
+
+  useEffect(() => {
+    document.documentElement.lang = language || 'zh-CN';
+  }, [language]);
 
   // Listen for main process navigation
   useEffect(() => {

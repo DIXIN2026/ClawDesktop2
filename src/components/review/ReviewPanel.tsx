@@ -89,16 +89,16 @@ export function ReviewPanel() {
         <div className="flex items-center gap-2 min-w-0">
           <GitBranch className="h-4 w-4 text-muted-foreground shrink-0" />
           <span className="text-xs font-mono truncate">
-            {branch || 'no branch'}
+            {branch || '无分支'}
           </span>
           {ahead > 0 && (
             <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-              {ahead} ahead
+              超前 {ahead}
             </Badge>
           )}
           {behind > 0 && (
             <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-              {behind} behind
+              落后 {behind}
             </Badge>
           )}
         </div>
@@ -108,7 +108,7 @@ export function ReviewPanel() {
             size="icon"
             className="h-7 w-7"
             onClick={handleUndo}
-            title="Undo last commit"
+            title="撤销上一次提交"
           >
             <Undo2 className="h-3.5 w-3.5" />
           </Button>
@@ -117,7 +117,7 @@ export function ReviewPanel() {
             size="icon"
             className="h-7 w-7"
             onClick={handleRedo}
-            title="Redo last undo"
+            title="重做上一次撤销"
           >
             <Redo2 className="h-3.5 w-3.5" />
           </Button>
@@ -127,7 +127,7 @@ export function ReviewPanel() {
             className="h-7 w-7"
             onClick={() => void refreshStatus()}
             disabled={isLoading}
-            title="Refresh"
+            title="刷新"
           >
             <RefreshCw
               className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`}
@@ -148,7 +148,7 @@ export function ReviewPanel() {
                 className="h-6 text-xs"
                 onClick={() => selectFile(null)}
               >
-                Back to file list
+                返回文件列表
               </Button>
             </div>
             {/* Diff viewer */}
@@ -176,7 +176,7 @@ export function ReviewPanel() {
           <Input
             value={commitMsg}
             onChange={(e) => setCommitMsg(e.target.value)}
-            placeholder="Commit message..."
+            placeholder="提交信息..."
             className="h-8 text-xs"
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -193,7 +193,7 @@ export function ReviewPanel() {
             disabled={!commitMsg.trim() || stagedCount === 0}
             onClick={() => void handleCommit()}
           >
-            Commit ({stagedCount})
+            提交（{stagedCount}）
           </Button>
           <Button
             size="sm"
@@ -207,7 +207,7 @@ export function ReviewPanel() {
             ) : (
               <ArrowUpFromLine className="h-3 w-3 mr-1" />
             )}
-            Push
+            推送
           </Button>
         </div>
       </div>

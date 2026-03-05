@@ -237,146 +237,141 @@ export function SchedulePage() {
   };
 
   return (
-    <div className="h-full overflow-auto p-6">
-      <div className="max-w-4xl mx-auto">
+    <div className="page-shell">
+      <div className="page-container max-w-5xl">
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <Clock className="h-6 w-6" />
-            <h1 className="text-2xl font-bold">定时任务</h1>
-          </div>
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm">
-                <Plus className="h-4 w-4 mr-2" />
-                新建定时
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-lg">
-              <DialogHeader>
-                <DialogTitle>创建定时任务</DialogTitle>
-                <DialogDescription>
-                  配置一个按计划自动执行的任务。
-                </DialogDescription>
-              </DialogHeader>
+        <div className="page-header">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Clock className="h-6 w-6" />
+              <h1 className="text-2xl font-bold">定时任务</h1>
+            </div>
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm" className="rounded-lg">
+                  <Plus className="h-4 w-4 mr-2" />
+                  新建定时
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>创建定时任务</DialogTitle>
+                  <DialogDescription>
+                    配置一个按计划自动执行的任务。
+                  </DialogDescription>
+                </DialogHeader>
 
-              <div className="grid gap-4 py-4">
-                {/* Task Name */}
-                <div className="grid gap-2">
-                  <Label htmlFor="task-name">任务名称</Label>
-                  <Input
-                    id="task-name"
-                    placeholder="例如：每日代码审查"
-                    value={form.name}
-                    onChange={(e) => updateField('name', e.target.value)}
-                  />
-                </div>
+                <div className="grid gap-4 py-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="task-name">任务名称</Label>
+                    <Input
+                      id="task-name"
+                      placeholder="例如：每日代码审查"
+                      value={form.name}
+                      onChange={(e) => updateField('name', e.target.value)}
+                    />
+                  </div>
 
-                {/* Schedule Type */}
-                <div className="grid gap-2">
-                  <Label>调度类型</Label>
-                  <Select
-                    value={form.scheduleType}
-                    onValueChange={(v) => updateField('scheduleType', v as ScheduleType)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="cron">Cron 表达式</SelectItem>
-                      <SelectItem value="interval">固定间隔 (毫秒)</SelectItem>
-                      <SelectItem value="once">一次性</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+                  <div className="grid gap-2">
+                    <Label>调度类型</Label>
+                    <Select
+                      value={form.scheduleType}
+                      onValueChange={(v) => updateField('scheduleType', v as ScheduleType)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="cron">Cron 表达式</SelectItem>
+                        <SelectItem value="interval">固定间隔 (毫秒)</SelectItem>
+                        <SelectItem value="once">一次性</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-                {/* Schedule Expression */}
-                <div className="grid gap-2">
-                  <Label htmlFor="schedule-expr">
-                    {form.scheduleType === 'cron'
-                      ? 'Cron 表达式'
-                      : form.scheduleType === 'interval'
-                        ? '间隔 (毫秒)'
-                        : '执行时间 (ISO)'}
-                  </Label>
-                  <Input
-                    id="schedule-expr"
-                    placeholder={
-                      form.scheduleType === 'cron'
-                        ? '0 9 * * *'
+                  <div className="grid gap-2">
+                    <Label htmlFor="schedule-expr">
+                      {form.scheduleType === 'cron'
+                        ? 'Cron 表达式'
                         : form.scheduleType === 'interval'
-                          ? '3600000'
-                          : '2026-03-01T09:00:00Z'
-                    }
-                    value={form.scheduleExpr}
-                    onChange={(e) => updateField('scheduleExpr', e.target.value)}
-                  />
-                  {form.scheduleType === 'cron' && (
-                    <p className="text-xs text-muted-foreground">
-                      示例: &quot;0 9 * * *&quot; 表示每天 9:00 执行
-                    </p>
-                  )}
+                          ? '间隔 (毫秒)'
+                          : '执行时间 (ISO)'}
+                    </Label>
+                    <Input
+                      id="schedule-expr"
+                      placeholder={
+                        form.scheduleType === 'cron'
+                          ? '0 9 * * *'
+                          : form.scheduleType === 'interval'
+                            ? '3600000'
+                            : '2026-03-01T09:00:00Z'
+                      }
+                      value={form.scheduleExpr}
+                      onChange={(e) => updateField('scheduleExpr', e.target.value)}
+                    />
+                    {form.scheduleType === 'cron' && (
+                      <p className="text-xs text-muted-foreground">
+                        示例: &quot;0 9 * * *&quot; 表示每天 9:00 执行
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="grid gap-2">
+                    <Label>Agent 类型</Label>
+                    <Select
+                      value={form.agentType}
+                      onValueChange={(v) => updateField('agentType', v)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {AGENT_TYPES.map((at) => (
+                          <SelectItem key={at.value} value={at.value}>
+                            {at.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="grid gap-2">
+                    <Label htmlFor="task-prompt">提示词</Label>
+                    <Textarea
+                      id="task-prompt"
+                      placeholder="描述要执行的任务..."
+                      rows={3}
+                      value={form.prompt}
+                      onChange={(e) => updateField('prompt', e.target.value)}
+                    />
+                  </div>
+
+                  <div className="grid gap-2">
+                    <Label htmlFor="work-dir">工作目录 (可选)</Label>
+                    <Input
+                      id="work-dir"
+                      placeholder="/path/to/project"
+                      value={form.workDirectory}
+                      onChange={(e) => updateField('workDirectory', e.target.value)}
+                    />
+                  </div>
                 </div>
 
-                {/* Agent Type */}
-                <div className="grid gap-2">
-                  <Label>Agent 类型</Label>
-                  <Select
-                    value={form.agentType}
-                    onValueChange={(v) => updateField('agentType', v)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {AGENT_TYPES.map((at) => (
-                        <SelectItem key={at.value} value={at.value}>
-                          {at.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* Prompt */}
-                <div className="grid gap-2">
-                  <Label htmlFor="task-prompt">提示词</Label>
-                  <Textarea
-                    id="task-prompt"
-                    placeholder="描述要执行的任务..."
-                    rows={3}
-                    value={form.prompt}
-                    onChange={(e) => updateField('prompt', e.target.value)}
-                  />
-                </div>
-
-                {/* Work Directory */}
-                <div className="grid gap-2">
-                  <Label htmlFor="work-dir">工作目录 (可选)</Label>
-                  <Input
-                    id="work-dir"
-                    placeholder="/path/to/project"
-                    value={form.workDirectory}
-                    onChange={(e) => updateField('workDirectory', e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setDialogOpen(false)}>
-                  取消
-                </Button>
-                <Button onClick={() => void handleCreate()} disabled={creating || !form.name.trim() || !form.scheduleExpr.trim()}>
-                  {creating ? '创建中...' : '创建'}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setDialogOpen(false)}>
+                    取消
+                  </Button>
+                  <Button onClick={() => void handleCreate()} disabled={creating || !form.name.trim() || !form.scheduleExpr.trim()}>
+                    {creating ? '创建中...' : '创建'}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
+          <p className="text-muted-foreground mt-2">
+            配置按计划运行的周期性任务，由智能体自动执行。
+          </p>
         </div>
-
-        <p className="text-muted-foreground mb-6">
-          配置按计划运行的周期性任务，由智能体自动执行。
-        </p>
 
         {/* Task List */}
         {tasks.length > 0 ? (
@@ -394,7 +389,7 @@ export function SchedulePage() {
             ))}
           </div>
         ) : (
-          <div className="text-center text-muted-foreground py-20">
+          <div className="panel-surface py-20 text-center text-muted-foreground">
             暂无定时任务。点击「新建定时」创建一个。
           </div>
         )}
@@ -418,7 +413,7 @@ interface TaskItemProps {
 
 function TaskItem({ task, expanded, logs, onToggle, onDelete, onExpand }: TaskItemProps) {
   return (
-    <Card>
+    <Card className="panel-surface">
       <CardHeader className="p-4 pb-3">
         <div className="flex items-center gap-3">
           {/* Expand toggle */}
@@ -529,7 +524,7 @@ function LogEntry({ log }: { log: TaskRunLog }) {
       : '--';
 
   return (
-    <div className="flex items-start gap-2 text-xs rounded-md bg-muted/50 p-2">
+    <div className="flex items-start gap-2 rounded-md bg-muted/60 p-2 text-xs">
       <div className="mt-0.5">{statusIcon}</div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">

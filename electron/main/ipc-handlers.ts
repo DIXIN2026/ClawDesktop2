@@ -1211,8 +1211,25 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return (typeof val === 'string' && val.trim().length > 0) ? val : process.cwd();
   }
 
+  function isNotGitRepoError(err: unknown): boolean {
+    const message = err instanceof Error ? err.message : String(err);
+    return message.includes('not a git repository');
+  }
+
   ipcMain.handle('git:status', wrapHandler((...args: unknown[]) => {
-    return getGitStatus(resolveWorkDir(args));
+    try {
+      return getGitStatus(resolveWorkDir(args));
+    } catch (err) {
+      if (isNotGitRepoError(err)) {
+        return {
+          branch: '',
+          files: [],
+          ahead: 0,
+          behind: 0,
+        };
+      }
+      throw err;
+    }
   }, 'git:status'));
 
   ipcMain.handle('git:diff', wrapHandler((...args: unknown[]) => {
@@ -1297,7 +1314,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   }, 'git:redo'));
 
   ipcMain.handle('git:worktree-list', wrapHandler((...args: unknown[]) => {
-    return listWorktrees(resolveWorkDir(args));
+    try {
+      return listWorktrees(resolveWorkDir(args));
+    } catch (err) {
+      if (isNotGitRepoError(err)) {
+        return [];
+      }
+      throw err;
+    }
   }, 'git:worktree-list'));
 
   ipcMain.handle('git:worktree-create', wrapHandler((...args: unknown[]) => {

@@ -43,11 +43,11 @@ export function Sidebar() {
       key={item.path}
       onClick={() => navigate(item.path)}
       className={cn(
-        'no-drag w-10 h-10 rounded-lg flex items-center justify-center transition-colors',
-        'hover:bg-accent',
+        'no-drag flex h-9 w-9 items-center justify-center rounded-xl border transition-all',
+        'hover:-translate-y-0.5 hover:border-border/80 hover:bg-accent/60 hover:text-foreground',
         isActive(item.path)
-          ? 'bg-accent text-accent-foreground'
-          : 'text-muted-foreground',
+          ? 'sidebar-active-glow border-primary/28 bg-primary/10 text-primary'
+          : 'border-transparent text-muted-foreground/90',
       )}
       title={item.label}
     >
@@ -56,16 +56,16 @@ export function Sidebar() {
   );
 
   return (
-    <div className="w-[var(--sidebar-width)] h-full flex flex-col items-center py-2 gap-1 border-r border-border bg-background/50 shrink-0">
-      {/* Top navigation */}
-      <div className="flex flex-col items-center gap-1 flex-1 pt-1">
-        {NAV_ITEMS.map(renderItem)}
+    <aside className="h-full w-[var(--sidebar-width)] shrink-0 px-2 py-2">
+      <div className="flex h-full flex-col items-center rounded-[20px] border border-border/70 bg-card/70 p-2 shadow-sm backdrop-blur-xl">
+        <div className="flex flex-1 flex-col items-center gap-1.5 pt-1">
+          {NAV_ITEMS.map(renderItem)}
+        </div>
+        <div className="my-2 h-px w-8 bg-border/70" />
+        <div className="flex flex-col items-center gap-1.5 pb-1">
+          {BOTTOM_ITEMS.map(renderItem)}
+        </div>
       </div>
-
-      {/* Bottom navigation */}
-      <div className="flex flex-col items-center gap-1 pb-1">
-        {BOTTOM_ITEMS.map(renderItem)}
-      </div>
-    </div>
+    </aside>
   );
 }

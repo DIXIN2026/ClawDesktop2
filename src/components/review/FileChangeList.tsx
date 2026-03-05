@@ -248,7 +248,7 @@ export function FileChangeList({
           {files.length === 0 && (
             <div className="px-3 py-6 text-center text-xs text-muted-foreground">
               <CheckSquare className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
-              Working tree clean
+              工作区干净
             </div>
           )}
         </div>

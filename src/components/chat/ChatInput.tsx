@@ -116,24 +116,38 @@ export function ChatInput({ onSend, onAbort, isStreaming, disabled }: ChatInputP
   const canSend = (value.trim().length > 0 || attachments.length > 0) && !disabled && !isStreaming;
 
   return (
-    <div className="border-t border-border p-4">
-      <div className="max-w-3xl mx-auto space-y-2">
+    <div className="border-t border-border/60 bg-background/80 px-4 py-5 backdrop-blur">
+      <div className="mx-auto w-full max-w-3xl space-y-2">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            void handleFilesSelected(e.target.files);
+          }}
+        />
+
         {attachments.length > 0 && (
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 px-1">
             {attachments.map((attachment, idx) => (
-              <div key={`${attachment.name ?? 'image'}-${idx}`} className="relative rounded-md border border-border p-1 bg-background">
+              <div
+                key={`${attachment.name ?? 'image'}-${idx}`}
+                className="group relative overflow-hidden rounded-xl border border-border/70 bg-card p-1 shadow-sm"
+              >
                 <img
                   src={`data:${attachment.mimeType};base64,${attachment.data}`}
                   alt={attachment.name ?? `image-${idx + 1}`}
-                  className="h-16 w-16 object-cover rounded"
+                  className="h-16 w-16 rounded-lg object-cover"
                 />
                 <button
                   type="button"
                   onClick={() => {
                     setAttachments((prev) => prev.filter((_, i) => i !== idx));
                   }}
-                  className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-black/70 text-white flex items-center justify-center"
-                  title="Remove image"
+                  className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-white opacity-0 transition-opacity group-hover:opacity-100"
+                  title="移除图片"
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -142,70 +156,70 @@ export function ChatInput({ onSend, onAbort, isStreaming, disabled }: ChatInputP
           </div>
         )}
 
-        <div className="flex gap-2 items-end">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              void handleFilesSelected(e.target.files);
-            }}
-          />
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            className="shrink-0 h-[44px] w-[44px]"
-            title="Attach images"
-            onClick={handlePickImages}
-            disabled={disabled || isStreaming || attachments.length >= MAX_ATTACHMENTS}
-          >
-            <ImagePlus className="h-4 w-4" />
-          </Button>
-
-          <div className="relative flex-1">
+        <div className="rounded-2xl border border-border bg-card/80 px-3 py-3 shadow-sm">
+          <div className="relative">
             <textarea
               ref={textareaRef}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
-            disabled={disabled}
-            rows={1}
-            className={cn(
-              'flex w-full rounded-md border border-input bg-background px-3 py-2.5 text-sm',
-              'ring-offset-background placeholder:text-muted-foreground',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-              'disabled:cursor-not-allowed disabled:opacity-50',
-              'resize-none overflow-y-auto',
-            )}
-            style={{ minHeight: MIN_HEIGHT, maxHeight: MAX_HEIGHT }}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="输入你的需求，@上下文，或 /命令"
+              disabled={disabled}
+              rows={1}
+              className={cn(
+                'flex w-full resize-none overflow-y-auto rounded-xl border-0 bg-transparent px-1 py-1 text-sm',
+                'placeholder:text-muted-foreground focus-visible:outline-none',
+                'disabled:cursor-not-allowed disabled:opacity-50',
+              )}
+              style={{ minHeight: MIN_HEIGHT, maxHeight: MAX_HEIGHT }}
             />
           </div>
-
-          {isStreaming ? (
-            <Button
-              onClick={onAbort}
-              size="icon"
-              variant="destructive"
-              className="shrink-0 h-[44px] w-[44px]"
-              title="Stop generation"
-            >
-              <Square className="h-4 w-4" />
-            </Button>
-          ) : (
-            <Button
-              onClick={handleSend}
-              size="icon"
-              className="shrink-0 h-[44px] w-[44px]"
-              disabled={!canSend}
-              title="Send message"
-            >
-              <Send className="h-4 w-4" />
-            </Button>
-          )}
+          <div className="mt-2 flex items-center justify-between gap-2 border-t border-border/70 pt-2">
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0 rounded-lg"
+                title="添加图片"
+                onClick={handlePickImages}
+                disabled={disabled || isStreaming || attachments.length >= MAX_ATTACHMENTS}
+              >
+                <ImagePlus className="h-4 w-4" />
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                {attachments.length > 0
+                  ? `已添加 ${attachments.length}/${MAX_ATTACHMENTS} 张图片`
+                  : '支持图片输入'}
+              </span>
+            </div>
+            {isStreaming ? (
+              <Button
+                onClick={onAbort}
+                size="sm"
+                variant="destructive"
+                className="h-8 rounded-lg px-3"
+                title="停止生成"
+              >
+                <Square className="mr-1.5 h-3.5 w-3.5" />
+                停止
+              </Button>
+            ) : (
+              <Button
+                onClick={handleSend}
+                size="sm"
+                className="h-8 rounded-lg px-3"
+                disabled={!canSend}
+                title="发送消息"
+              >
+                <Send className="mr-1.5 h-3.5 w-3.5" />
+                发送
+              </Button>
+            )}
+          </div>
+        </div>
+        <div className="px-1 text-[11px] text-muted-foreground">
+          Enter 发送，Shift+Enter 换行
         </div>
       </div>
     </div>

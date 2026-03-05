@@ -222,17 +222,19 @@ export function ChannelsPage() {
   }, [refreshStatuses]);
 
   return (
-    <div className="h-full overflow-auto p-6">
-      <div className="max-w-5xl mx-auto space-y-6">
-        <div className="flex items-center gap-3">
-          <Radio className="h-6 w-6" />
-          <h1 className="text-2xl font-bold">Channels</h1>
+    <div className="page-shell">
+      <div className="page-container max-w-5xl">
+        <div className="page-header">
+          <div className="flex items-center gap-3">
+            <Radio className="h-6 w-6" />
+            <h1 className="text-2xl font-bold">渠道中心</h1>
+          </div>
+          <p className="text-muted-foreground mt-2">
+            支持四条渠道：飞书 1（OpenClaw 风格）、飞书 2（CoPaw 风格）、QQ、Email（SMTP）。
+          </p>
         </div>
-        <p className="text-muted-foreground">
-          支持四条渠道：飞书 1（OpenClaw 风格）、飞书 2（CoPaw 风格）、QQ、Email（SMTP）。
-        </p>
 
-        <Card>
+        <Card className="panel-surface">
           <CardHeader className="pb-3">
             <CardTitle className="text-lg">飞书 1（OpenClaw）</CardTitle>
             <CardDescription>主飞书账号，用于默认企业渠道。</CardDescription>
@@ -304,7 +306,7 @@ export function ChannelsPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="panel-surface">
           <CardHeader className="pb-3">
             <CardTitle className="text-lg">飞书 2（CoPaw）</CardTitle>
             <CardDescription>独立飞书账号，用于第二条渠道并行接入。</CardDescription>
@@ -356,7 +358,7 @@ export function ChannelsPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="panel-surface">
           <CardHeader className="pb-3">
             <CardTitle className="text-lg">QQ</CardTitle>
             <CardDescription>QQ Bot 网关渠道。</CardDescription>
@@ -413,7 +415,7 @@ export function ChannelsPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="panel-surface">
           <CardHeader className="pb-3">
             <CardTitle className="text-lg flex items-center gap-2">
               <Mail className="h-4 w-4" />

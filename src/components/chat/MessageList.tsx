@@ -30,11 +30,11 @@ export function MessageList({ messages, isStreaming }: MessageListProps) {
           </div>
           <div className="space-y-1">
             <h3 className="text-sm font-medium text-foreground">
-              Start a conversation
+              开始对话
             </h3>
             <p className="text-sm text-muted-foreground max-w-sm">
-              Send a message to begin chatting with the AI agent. You can ask
-              questions, request code changes, or get help with your project.
+              发送一条消息开始与 AI 智能体对话。你可以提问、请求修改代码，
+              或让它协助处理你的项目。
             </p>
           </div>
         </div>

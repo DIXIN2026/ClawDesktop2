@@ -1,6 +1,11 @@
 import { create } from 'zustand';
 import { ipc } from '../services/ipc';
 
+const isNotGitRepoError = (err: unknown): boolean => {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes('not a git repository');
+};
+
 // ── Types ──────────────────────────────────────────────────────────
 
 export interface FileChange {
@@ -94,6 +99,17 @@ export const useGitStore = create<GitState>((set, get) => ({
         isLoading: false,
       });
     } catch (err) {
+      if (isNotGitRepoError(err)) {
+        set({
+          branch: '',
+          files: [],
+          ahead: 0,
+          behind: 0,
+          diffContent: '',
+          isLoading: false,
+        });
+        return;
+      }
       console.error('[Git] refreshStatus failed:', err instanceof Error ? err.message : String(err));
       set({ isLoading: false });
     }
@@ -151,6 +167,10 @@ export const useGitStore = create<GitState>((set, get) => ({
       const worktrees = await ipc.gitWorktreeList(get().workDirectory ?? undefined);
       set({ worktrees, isWorktreeLoading: false });
     } catch (err) {
+      if (isNotGitRepoError(err)) {
+        set({ worktrees: [], isWorktreeLoading: false });
+        return;
+      }
       console.error('[Git] loadWorktrees failed:', err instanceof Error ? err.message : String(err));
       set({ worktrees: [], isWorktreeLoading: false });
     }

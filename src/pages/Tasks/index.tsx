@@ -43,20 +43,20 @@ function IssueCard({ issue, onSelect, onDragStart }: {
       draggable
       onDragStart={(e) => onDragStart(e, issue.id)}
       onClick={() => onSelect(issue.id)}
-      className="group bg-white dark:bg-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-700 p-3 cursor-pointer hover:border-blue-400 hover:shadow-sm transition-all"
+      className="group cursor-pointer rounded-xl border border-border/70 bg-card/70 p-3 transition-all hover:border-primary/35 hover:bg-accent/35 hover:shadow-sm"
     >
       <div className="flex items-start gap-2">
-        <GripVertical className="w-4 h-4 text-zinc-300 opacity-0 group-hover:opacity-100 mt-0.5 shrink-0" />
+        <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground/60 opacity-0 group-hover:opacity-100" />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 mb-1">
             <TIcon className={`w-3.5 h-3.5 ${tCfg.color} shrink-0`} />
-            <span className="text-xs text-zinc-400 shrink-0">{issue.id.slice(0, 8)}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">{issue.id.slice(0, 8)}</span>
           </div>
-          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">{issue.title}</p>
+          <p className="truncate text-sm font-medium">{issue.title}</p>
           {issue.labels.length > 0 && (
             <div className="flex gap-1 mt-1.5 flex-wrap">
               {issue.labels.slice(0, 3).map((l) => (
-                <span key={l} className="text-xs px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300">
+                <span key={l} className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
                   {l}
                 </span>
               ))}
@@ -65,7 +65,7 @@ function IssueCard({ issue, onSelect, onDragStart }: {
           <div className="flex items-center justify-between mt-2">
             <PIcon className={`w-3.5 h-3.5 ${pCfg.color}`} />
             {issue.assignee && (
-              <span className="text-xs text-zinc-500 truncate max-w-[80px]">{issue.assignee}</span>
+              <span className="max-w-[80px] truncate text-xs text-muted-foreground">{issue.assignee}</span>
             )}
           </div>
         </div>
@@ -88,22 +88,22 @@ function IssueColumn({ state, issues, onSelect, onDrop, onDragStart, onCreateInS
 
   return (
     <div
-      className={`flex flex-col min-w-[280px] max-w-[320px] shrink-0 rounded-lg ${dragOver ? 'bg-blue-50 dark:bg-blue-900/20' : 'bg-zinc-50 dark:bg-zinc-900'}`}
+      className={`flex min-w-[280px] max-w-[320px] shrink-0 flex-col rounded-xl border border-border/70 ${dragOver ? 'bg-accent/70' : 'bg-card/60'}`}
       onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
       onDragLeave={() => setDragOver(false)}
       onDrop={(e) => { setDragOver(false); onDrop(e, state.id); }}
     >
-      <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-200 dark:border-zinc-700">
+      <div className="flex items-center justify-between border-b border-border/70 px-3 py-2">
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded-full" style={{ backgroundColor: state.color }} />
-          <span className="text-sm font-medium text-zinc-700 dark:text-zinc-200">{state.name}</span>
-          <span className="text-xs text-zinc-400 bg-zinc-200 dark:bg-zinc-700 px-1.5 py-0.5 rounded-full">
+          <span className="text-sm font-medium">{state.name}</span>
+          <span className="rounded-full bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
             {issues.length}
           </span>
         </div>
         <button
           onClick={() => onCreateInState(state.id)}
-          className="p-1 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-400 hover:text-zinc-600"
+          className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
         >
           <Plus className="w-4 h-4" />
         </button>
@@ -321,35 +321,35 @@ function FilterBar({ groupBy, viewMode, filters, onGroupChange, onViewChange, on
   const [showFilters, setShowFilters] = useState(false);
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2 border-b border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800">
+    <div className="panel-surface flex items-center gap-3 px-4 py-3">
       <div className="relative flex-1 max-w-xs">
         <Search className="w-4 h-4 absolute left-2.5 top-2 text-zinc-400" />
         <input
           onChange={(e) => onSearch(e.target.value)}
           placeholder="搜索任务..."
-          className="w-full pl-8 pr-3 py-1.5 text-sm border border-zinc-200 dark:border-zinc-600 rounded-lg bg-transparent"
+          className="w-full rounded-lg border border-border/80 bg-background/80 py-1.5 pl-8 pr-3 text-sm"
         />
       </div>
-      <div className="flex items-center gap-1 border border-zinc-200 dark:border-zinc-600 rounded-lg p-0.5">
+      <div className="flex items-center gap-1 rounded-lg border border-border/70 p-0.5">
         <button
           onClick={() => onViewChange('board')}
-          className={`p-1.5 rounded ${viewMode === 'board' ? 'bg-zinc-200 dark:bg-zinc-600' : ''}`}
+          className={`rounded p-1.5 ${viewMode === 'board' ? 'bg-accent text-primary' : 'text-muted-foreground'}`}
         >
           <LayoutGrid className="w-4 h-4" />
         </button>
         <button
           onClick={() => onViewChange('list')}
-          className={`p-1.5 rounded ${viewMode === 'list' ? 'bg-zinc-200 dark:bg-zinc-600' : ''}`}
+          className={`rounded p-1.5 ${viewMode === 'list' ? 'bg-accent text-primary' : 'text-muted-foreground'}`}
         >
           <List className="w-4 h-4" />
         </button>
       </div>
       <div className="flex items-center gap-1.5">
-        <span className="text-xs text-zinc-500">分组:</span>
+        <span className="text-xs text-muted-foreground">分组:</span>
         <select
           value={groupBy}
           onChange={(e) => onGroupChange(e.target.value as GroupBy)}
-          className="text-xs border border-zinc-200 dark:border-zinc-600 rounded px-2 py-1 bg-transparent"
+          className="rounded border border-border/80 bg-background/80 px-2 py-1 text-xs"
         >
           <option value="state">状态</option>
           <option value="priority">优先级</option>
@@ -359,7 +359,7 @@ function FilterBar({ groupBy, viewMode, filters, onGroupChange, onViewChange, on
       </div>
       <button
         onClick={() => setShowFilters(!showFilters)}
-        className={`flex items-center gap-1 text-xs px-2 py-1 rounded-lg border ${showFilters || filters.priority || filters.issueType ? 'border-blue-400 text-blue-600' : 'border-zinc-200 dark:border-zinc-600 text-zinc-500'}`}
+        className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-xs ${showFilters || filters.priority || filters.issueType ? 'border-primary/40 text-primary' : 'border-border/70 text-muted-foreground'}`}
       >
         <Filter className="w-3.5 h-3.5" />
         筛选
@@ -370,7 +370,7 @@ function FilterBar({ groupBy, viewMode, filters, onGroupChange, onViewChange, on
           <select
             value={filters.priority ?? ''}
             onChange={(e) => onFilterChange({ ...filters, priority: e.target.value as IssuePriority || undefined })}
-            className="text-xs border border-zinc-200 dark:border-zinc-600 rounded px-2 py-1 bg-transparent"
+            className="rounded border border-border/80 bg-background/80 px-2 py-1 text-xs"
           >
             <option value="">全部优先级</option>
             {Object.entries(PRIORITY_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
@@ -378,7 +378,7 @@ function FilterBar({ groupBy, viewMode, filters, onGroupChange, onViewChange, on
           <select
             value={filters.issueType ?? ''}
             onChange={(e) => onFilterChange({ ...filters, issueType: e.target.value as IssueType || undefined })}
-            className="text-xs border border-zinc-200 dark:border-zinc-600 rounded px-2 py-1 bg-transparent"
+            className="rounded border border-border/80 bg-background/80 px-2 py-1 text-xs"
           >
             <option value="">全部类型</option>
             {Object.entries(ISSUE_TYPE_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
@@ -514,12 +514,13 @@ export default function TasksPage() {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-200 dark:border-zinc-700">
-        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">任务看板</h1>
+    <div className="page-shell">
+      <div className="page-container h-full max-w-none space-y-3">
+      <div className="page-header flex items-center justify-between">
+        <h1 className="text-lg font-semibold">任务看板</h1>
         <button
           onClick={() => setCreateDialogState(store.states[1]?.id ?? store.states[0]?.id ?? '')}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700"
+          className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90"
         >
           <Plus className="w-4 h-4" />
           新建
@@ -536,10 +537,10 @@ export default function TasksPage() {
         onSearch={(q) => store.setFilters({ ...store.filters, search: q || undefined })}
       />
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="panel-surface flex flex-1 overflow-hidden">
         <div className="flex-1 overflow-auto">
           {store.viewMode === 'board' ? (
-            <div className="flex gap-3 p-4 h-full">
+            <div className="flex h-full gap-3 p-4">
               {store.states.map((state) => (
                 <IssueColumn
                   key={state.id}
@@ -577,6 +578,7 @@ export default function TasksPage() {
           onCreate={handleCreate}
         />
       )}
+      </div>
     </div>
   );
 }

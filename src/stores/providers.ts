@@ -190,22 +190,35 @@ export const useProvidersStore = create<ProvidersState>((set) => ({
     set({ isDiscovering: true });
     try {
       const result = await ipc.discoverProviders();
-      const savedCli = await ipc.getSetting('provider:selectedCliBackend');
+      const agentTypes = ['coding', 'requirements', 'design', 'testing'] as const;
+      const [savedCli, ...savedModels] = await Promise.all([
+        ipc.getSetting('provider:selectedCliBackend'),
+        ...agentTypes.map((agentType) => ipc.getSetting(`agent:model:${agentType}`)),
+      ]);
 
-      const defaults: AgentDefaultModel[] = [];
-      for (const agentType of ['coding', 'requirements', 'design', 'testing'] as const) {
-        const saved = await ipc.getSetting(`agent:model:${agentType}`);
-        defaults.push({
-          agentType,
-          primaryModel: typeof saved === 'string' ? saved : '',
-          fallbackModel: '',
-        });
+      const defaults: AgentDefaultModel[] = agentTypes.map((agentType, index) => ({
+        agentType,
+        primaryModel: typeof savedModels[index] === 'string' ? savedModels[index] : '',
+        fallbackModel: '',
+      }));
+
+      const cliAgents = (result.cliAgents ?? []) as CliAgentBackend[];
+      const installedCli = cliAgents.filter((agent) => agent.installed);
+      const savedCliBackend = typeof savedCli === 'string' && savedCli.length > 0 && savedCli !== 'none'
+        ? savedCli
+        : null;
+      const selectedCliBackend = installedCli.some((agent) => agent.id === savedCliBackend)
+        ? savedCliBackend
+        : (installedCli[0]?.id ?? null);
+
+      if (selectedCliBackend !== savedCliBackend) {
+        void ipc.setSetting('provider:selectedCliBackend', selectedCliBackend ?? 'none');
       }
 
       set({
         discovered: (result.providers ?? []) as unknown as DiscoveredProvider[],
-        cliAgents: (result.cliAgents ?? []) as CliAgentBackend[],
-        selectedCliBackend: typeof savedCli === 'string' && savedCli.length > 0 && savedCli !== 'none' ? savedCli : null,
+        cliAgents,
+        selectedCliBackend,
         agentDefaults: defaults,
         isDiscovering: false,
       });
