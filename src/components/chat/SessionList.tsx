@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import {
   Plus,
   MessageSquare,
@@ -59,7 +59,7 @@ function formatRelativeTime(dateStr: string): string {
   return date.toLocaleDateString();
 }
 
-export function SessionList({
+export const SessionList = memo(function SessionList({
   sessions,
   currentId,
   onSelect,
@@ -256,4 +256,4 @@ export function SessionList({
       </ScrollArea>
     </div>
   );
-}
+});

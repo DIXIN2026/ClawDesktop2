@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   PanelLeftClose,
   PanelLeftOpen,
@@ -79,14 +79,20 @@ export function ChatPage() {
   const providers = useProvidersStore((s) => s.providers);
 
   // Build flat model list
-  const availableModels = providers.flatMap((p) =>
-    p.models.map((m) => ({
-      value: `${p.id}/${m.id}`,
-      label: `${m.name} (${p.name})`,
-    })),
+  const availableModels = useMemo(
+    () => providers.flatMap((p) =>
+      p.models.map((m) => ({
+        value: `${p.id}/${m.id}`,
+        label: `${m.name} (${p.name})`,
+      })),
+    ),
+    [providers],
   );
 
-  const currentSession = sessions.find((s) => s.id === currentSessionId);
+  const currentSession = useMemo(
+    () => sessions.find((s) => s.id === currentSessionId),
+    [sessions, currentSessionId],
+  );
   const currentPreviewUrl = currentSessionId ? previewUrls[currentSessionId] : undefined;
   const [selectedModel, setSelectedModel] = useState(
     currentSession?.currentModel ?? (availableModels[0]?.value ?? ''),
@@ -150,6 +156,10 @@ export function ChatPage() {
     },
     [removeWorktree],
   );
+
+  const handleWorktreeRefresh = useCallback(() => {
+    void loadWorktrees();
+  }, [loadWorktrees]);
 
   const handleWorktreeStartChat = useCallback(
     (worktree: GitWorktree) => {
@@ -219,16 +229,16 @@ export function ChatPage() {
           showSidebar ? 'w-72 p-3 pr-2' : 'w-0 overflow-hidden p-0',
         )}
       >
-        <div className="h-full overflow-hidden rounded-2xl border border-border/70 bg-card/60 shadow-sm backdrop-blur">
+        <div className="h-full overflow-hidden rounded-2xl border border-border/70 bg-card/80 shadow-sm">
           <SessionList
             sessions={sessions}
             currentId={currentSessionId}
             onSelect={handleSelectSession}
-            onCreate={() => void handleCreateSession()}
+            onCreate={handleCreateSession}
             onDelete={handleDeleteSession}
             worktrees={worktrees}
             currentWorktreePath={currentSession?.workDirectory ?? null}
-            onWorktreeRefresh={() => void loadWorktrees()}
+            onWorktreeRefresh={handleWorktreeRefresh}
             onWorktreeCreate={handleWorktreeCreate}
             onWorktreeDelete={handleWorktreeDelete}
             onWorktreeStartChat={handleWorktreeStartChat}
@@ -240,7 +250,7 @@ export function ChatPage() {
       {/* Center: Chat panel */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Top bar */}
-        <div className="mx-4 mb-2 mt-4 flex shrink-0 items-center justify-between gap-2 rounded-2xl border border-border/70 bg-card/60 px-3 py-2 shadow-sm backdrop-blur">
+        <div className="mx-4 mb-2 mt-4 flex shrink-0 items-center justify-between gap-2 rounded-2xl border border-border/70 bg-card/80 px-3 py-2 shadow-sm">
           <div className="flex items-center gap-2">
             <Button
               variant="ghost"

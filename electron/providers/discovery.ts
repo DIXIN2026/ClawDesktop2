@@ -3,7 +3,7 @@
  * Scans environment variables, local services, and CLI tools
  * Per requirements §2.9.5
  */
-import { execFileSync } from 'child_process';
+import { execFile } from 'child_process';
 import type { DiscoveredProvider, CliAgentBackend } from './types.js';
 import { scanCliCredentials } from './cli-credentials.js';
 
@@ -101,25 +101,35 @@ async function scanLocalServices(): Promise<{ providers: DiscoveredProvider[]; o
   return { providers: found, ollamaModels };
 }
 
-function detectCliTool(command: string): { installed: boolean; version?: string } {
-  try {
-    const which = process.platform === 'win32' ? 'where' : 'which';
-    // Use execFileSync to avoid shell interpolation
-    execFileSync(which, [command], { timeout: 1200, encoding: 'utf-8' });
-    try {
-      const version = execFileSync(command, ['--version'], { timeout: 800, encoding: 'utf-8' }).trim();
-      return { installed: true, version };
-    } catch {
-      return { installed: true };
-    }
-  } catch {
-    return { installed: false };
-  }
+function runCommand(command: string, args: string[], timeoutMs: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile(command, args, { timeout: timeoutMs, encoding: 'utf-8' }, (err, stdout) => {
+      if (err) {
+        resolve(null);
+        return;
+      }
+      const output = typeof stdout === 'string' ? stdout.trim() : String(stdout).trim();
+      resolve(output.length > 0 ? output : null);
+    });
+  });
 }
 
-function scanCliTools(): CliAgentBackend[] {
-  return CLI_AGENTS.map(agent => {
-    const result = detectCliTool(agent.command);
+async function detectCliTool(command: string): Promise<{ installed: boolean; version?: string }> {
+  const which = process.platform === 'win32' ? 'where' : 'which';
+  const found = await runCommand(which, [command], 450);
+  if (!found) {
+    return { installed: false };
+  }
+  const version = await runCommand(command, ['--version'], 250);
+  if (version) {
+    return { installed: true, version };
+  }
+  return { installed: true };
+}
+
+async function scanCliTools(): Promise<CliAgentBackend[]> {
+  return Promise.all(CLI_AGENTS.map(async (agent) => {
+    const result = await detectCliTool(agent.command);
     return {
       id: agent.id,
       name: agent.name,
@@ -127,7 +137,7 @@ function scanCliTools(): CliAgentBackend[] {
       installed: result.installed,
       version: result.version,
     };
-  });
+  }));
 }
 
 export interface DiscoveryResult {
@@ -138,8 +148,7 @@ export interface DiscoveryResult {
 
 export async function runDiscovery(): Promise<DiscoveryResult> {
   const envProviders = scanEnvKeys();
-  const localResult = await scanLocalServices();
-  const cliAgents = scanCliTools();
+  const [localResult, cliAgents] = await Promise.all([scanLocalServices(), scanCliTools()]);
 
   const cliDiscovered: DiscoveredProvider[] = cliAgents
     .filter(a => a.installed)
@@ -150,7 +159,7 @@ export async function runDiscovery(): Promise<DiscoveryResult> {
     }));
 
   // Scan CLI credentials (Claude Code, Codex, Qwen, MiniMax OAuth tokens)
-  const cliCredentials = scanCliCredentials();
+  const cliCredentials = scanCliCredentials({ includeKeychain: false });
 
   return {
     providers: [...envProviders, ...localResult.providers, ...cliDiscovered, ...cliCredentials],

@@ -14,6 +14,7 @@ import {
   Sparkles,
   AlertTriangle,
   CheckCircle2,
+  FolderOpen,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -79,6 +80,7 @@ export function SkillsPage() {
   const [generatedPromptText, setGeneratedPromptText] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isInstallingGenerated, setIsInstallingGenerated] = useState(false);
+  const [isImportingLocal, setIsImportingLocal] = useState(false);
 
   // Fetch installed skills from backend
   const loadInstalled = useCallback(async () => {
@@ -204,6 +206,23 @@ export function SkillsPage() {
     }
   };
 
+  const handleImportLocalSkill = async () => {
+    setIsImportingLocal(true);
+    try {
+      const result = await ipc.openDirectory();
+      if (!result || result.canceled || result.filePaths.length === 0) {
+        return;
+      }
+      const imported = await ipc.importLocalSkill(result.filePaths[0] ?? '');
+      await loadInstalled();
+      toast.success(`已导入外部 Skills：${imported.id}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsImportingLocal(false);
+    }
+  };
+
   const installedIds = new Set(installedSkills.map((s) => s.id));
 
   const filterByCategory = (skills: SkillInfo[]): SkillInfo[] => {
@@ -219,9 +238,24 @@ export function SkillsPage() {
       <div className="page-container">
         {/* Header */}
         <div className="page-header">
-          <div className="flex items-center gap-3">
-            <Puzzle className="h-6 w-6" />
-            <h1 className="text-2xl font-bold">技能商店</h1>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <Puzzle className="h-6 w-6" />
+              <h1 className="text-2xl font-bold">技能商店</h1>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleImportLocalSkill()}
+              disabled={isImportingLocal}
+            >
+              {isImportingLocal ? (
+                <RefreshCw className="h-4 w-4 mr-1.5 animate-spin" />
+              ) : (
+                <FolderOpen className="h-4 w-4 mr-1.5" />
+              )}
+              {isImportingLocal ? '导入中...' : '导入外部 Skills'}
+            </Button>
           </div>
           <p className="text-muted-foreground mt-2">
             从 ClawHub 市场浏览和安装技能，扩展智能体能力。

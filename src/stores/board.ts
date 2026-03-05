@@ -107,17 +107,58 @@ function normalizeIssue(raw: Record<string, unknown>): BoardIssue {
 
 // ── Store ───────────────────────────────────────────────────────────
 
-export const useBoardStore = create<TaskBoardStore>((set, get) => ({
-  states: [],
-  issues: [],
-  groupBy: 'state',
-  subGroupBy: null,
-  filters: {},
-  viewMode: 'board',
-  selectedIssueId: null,
-  loading: false,
+export const useBoardStore = create<TaskBoardStore>((set, get) => {
+  const pendingIssueUpdates = new Map<string, Record<string, unknown>>();
+  let flushTimer: ReturnType<typeof setTimeout> | undefined;
+
+  async function flushPendingIssueUpdates() {
+    flushTimer = undefined;
+    if (pendingIssueUpdates.size === 0) return;
+    const payloads = Array.from(pendingIssueUpdates.entries());
+    pendingIssueUpdates.clear();
+    const results = await Promise.allSettled(payloads.map(async ([issueId, updates]) => {
+      if (Object.keys(updates).length === 0) return;
+      await ipc.boardIssueUpdate(issueId, updates);
+    }));
+    let hasFailures = false;
+    for (let i = 0; i < results.length; i += 1) {
+      if (results[i]?.status === 'rejected') {
+        hasFailures = true;
+        const [issueId, updates] = payloads[i]!;
+        const merged = {
+          ...(pendingIssueUpdates.get(issueId) ?? {}),
+          ...updates,
+        };
+        pendingIssueUpdates.set(issueId, merged);
+      }
+    }
+    if (hasFailures) {
+      scheduleFlushIssueUpdates();
+    }
+  }
+
+  function scheduleFlushIssueUpdates() {
+    if (flushTimer) return;
+    flushTimer = setTimeout(() => {
+      flushPendingIssueUpdates().catch((err) => {
+        console.error('Failed to flush board issue updates:', err);
+        scheduleFlushIssueUpdates();
+      });
+    }, 150);
+  }
+
+  return ({
+    states: [],
+    issues: [],
+    groupBy: 'state',
+    subGroupBy: null,
+    filters: {},
+    viewMode: 'board',
+    selectedIssueId: null,
+    loading: false,
 
   loadBoard: async () => {
+    await flushPendingIssueUpdates();
     set({ loading: true });
     try {
       const [states, rawIssues] = await Promise.all([
@@ -139,6 +180,7 @@ export const useBoardStore = create<TaskBoardStore>((set, get) => ({
   selectIssue: (id) => set({ selectedIssueId: id }),
 
   createIssue: async (data) => {
+    await flushPendingIssueUpdates();
     const result = await ipc.boardIssueCreate({
       title: data.title,
       description: data.description,
@@ -155,27 +197,33 @@ export const useBoardStore = create<TaskBoardStore>((set, get) => ({
     return id;
   },
 
-  updateIssue: async (id, updates) => {
-    const dbUpdates: Record<string, unknown> = {};
-    if (updates.title !== undefined) dbUpdates.title = updates.title;
-    if (updates.description !== undefined) dbUpdates.description = updates.description;
-    if (updates.priority !== undefined) dbUpdates.priority = updates.priority;
-    if (updates.assignee !== undefined) dbUpdates.assignee = updates.assignee;
-    if (updates.labels !== undefined) dbUpdates.labels = JSON.stringify(updates.labels);
-    if (updates.issue_type !== undefined) dbUpdates.issue_type = updates.issue_type;
-    if (updates.estimate_points !== undefined) dbUpdates.estimate_points = updates.estimate_points;
-    if (updates.start_date !== undefined) dbUpdates.start_date = updates.start_date;
-    if (updates.target_date !== undefined) dbUpdates.target_date = updates.target_date;
+    updateIssue: async (id, updates) => {
+      const dbUpdates: Record<string, unknown> = {};
+      if (updates.title !== undefined) dbUpdates.title = updates.title;
+      if (updates.description !== undefined) dbUpdates.description = updates.description;
+      if (updates.priority !== undefined) dbUpdates.priority = updates.priority;
+      if (updates.assignee !== undefined) dbUpdates.assignee = updates.assignee;
+      if (updates.labels !== undefined) dbUpdates.labels = JSON.stringify(updates.labels);
+      if (updates.issue_type !== undefined) dbUpdates.issue_type = updates.issue_type;
+      if (updates.estimate_points !== undefined) dbUpdates.estimate_points = updates.estimate_points;
+      if (updates.start_date !== undefined) dbUpdates.start_date = updates.start_date;
+      if (updates.target_date !== undefined) dbUpdates.target_date = updates.target_date;
 
-    await ipc.boardIssueUpdate(id, dbUpdates);
+      set((state) => ({
+        issues: state.issues.map((i) => (i.id === id ? { ...i, ...updates } : i)),
+      }));
 
-    // Optimistic update
-    set((state) => ({
-      issues: state.issues.map((i) => (i.id === id ? { ...i, ...updates } : i)),
-    }));
-  },
+      if (Object.keys(dbUpdates).length === 0) return;
+      const merged = {
+        ...(pendingIssueUpdates.get(id) ?? {}),
+        ...dbUpdates,
+      };
+      pendingIssueUpdates.set(id, merged);
+      scheduleFlushIssueUpdates();
+    },
 
   moveIssue: async (issueId, targetStateId, sortOrder) => {
+    await flushPendingIssueUpdates();
     await ipc.boardIssueMove(issueId, targetStateId, sortOrder);
 
     // Optimistic update
@@ -187,6 +235,8 @@ export const useBoardStore = create<TaskBoardStore>((set, get) => ({
   },
 
   deleteIssue: async (issueId) => {
+    pendingIssueUpdates.delete(issueId);
+    await flushPendingIssueUpdates();
     await ipc.boardIssueDelete(issueId);
     set((state) => ({
       issues: state.issues.filter((i) => i.id !== issueId),
@@ -194,19 +244,20 @@ export const useBoardStore = create<TaskBoardStore>((set, get) => ({
     }));
   },
 
-  getFilteredIssues: () => {
-    const { issues, filters } = get();
-    return issues.filter((issue) => {
-      if (filters.priority && issue.priority !== filters.priority) return false;
-      if (filters.issueType && issue.issue_type !== filters.issueType) return false;
-      if (filters.assignee && issue.assignee !== filters.assignee) return false;
-      if (filters.search) {
-        const q = filters.search.toLowerCase();
-        if (!issue.title.toLowerCase().includes(q) && !issue.description?.toLowerCase().includes(q)) {
-          return false;
+    getFilteredIssues: () => {
+      const { issues, filters } = get();
+      return issues.filter((issue) => {
+        if (filters.priority && issue.priority !== filters.priority) return false;
+        if (filters.issueType && issue.issue_type !== filters.issueType) return false;
+        if (filters.assignee && issue.assignee !== filters.assignee) return false;
+        if (filters.search) {
+          const q = filters.search.toLowerCase();
+          if (!issue.title.toLowerCase().includes(q) && !issue.description?.toLowerCase().includes(q)) {
+            return false;
+          }
         }
-      }
-      return true;
-    });
-  },
-}));
+        return true;
+      });
+    },
+  });
+});

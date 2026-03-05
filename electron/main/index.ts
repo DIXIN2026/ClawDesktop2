@@ -24,7 +24,7 @@ import { getChatSession, getChannelState } from '../utils/db.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const runtimeSessionDataPath = join(process.cwd(), '.clawdesktop2-session');
+const runtimeSessionDataPath = join(app.getPath('temp'), 'clawdesktop2-session');
 
 mkdirSync(runtimeSessionDataPath, { recursive: true });
 app.setPath('sessionData', runtimeSessionDataPath);
@@ -128,7 +128,9 @@ function createWindow(): BrowserWindow {
 
   if (process.env.VITE_DEV_SERVER_URL) {
     win.loadURL(process.env.VITE_DEV_SERVER_URL);
-    win.webContents.openDevTools();
+    if (process.env.CLAWDESKTOP2_OPEN_DEVTOOLS === '1') {
+      win.webContents.openDevTools({ mode: 'detach' });
+    }
   } else {
     win.loadFile(join(__dirname, '../../dist/index.html'));
   }

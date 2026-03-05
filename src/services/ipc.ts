@@ -263,6 +263,7 @@ export const ipc = {
   installSkill: (id: string) => invoke<boolean>('skills:install', id),
   installGeneratedSkill: (params: { manifest: Record<string, unknown>; skillPrompt: string }) =>
     invoke<{ id: string }>('skills:install-generated', params),
+  importLocalSkill: (sourceDir: string) => invoke<{ id: string }>('skills:import-local', sourceDir),
   uninstallSkill: (id: string) => invoke<boolean>('skills:uninstall', id),
   listInstalledSkills: () => invoke<Record<string, unknown>[]>('skills:list'),
 

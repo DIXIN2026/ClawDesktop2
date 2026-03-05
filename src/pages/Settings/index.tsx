@@ -28,7 +28,7 @@ export function SettingsPage() {
   return (
     <div className="flex h-full overflow-hidden p-4 gap-3">
       {/* Settings sidebar */}
-      <div className="w-56 shrink-0 rounded-2xl border border-border/70 bg-card/60 p-3 space-y-1 shadow-sm backdrop-blur">
+      <div className="w-56 shrink-0 rounded-2xl border border-border/70 bg-card/80 p-3 space-y-1 shadow-sm">
         {SETTINGS_NAV.map((item) => (
           <button
             key={item.path}
@@ -47,8 +47,8 @@ export function SettingsPage() {
       </div>
 
       {/* Settings content */}
-      <div className="flex-1 overflow-hidden rounded-2xl border border-border/70 bg-background/70 shadow-sm backdrop-blur">
-        <div className="h-full overflow-auto p-6">
+      <div className="flex-1 overflow-hidden rounded-2xl border border-border/70 bg-background/80 shadow-sm">
+        <div className="h-full overflow-y-auto scrollbar-hidden p-6">
           <Routes>
             <Route index element={<GeneralSettings />} />
             <Route path="providers" element={<ProvidersSettings />} />

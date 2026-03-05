@@ -42,7 +42,7 @@ interface CachedCredential<T> {
 
 const DEFAULT_TTL_MS = 60_000;
 const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
-const KEYCHAIN_TIMEOUT_MS = 5_000;
+const KEYCHAIN_TIMEOUT_MS = 600;
 
 const CLAUDE_KEYCHAIN_SERVICE = 'Claude Code-credentials';
 const CLAUDE_CRED_PATH = '.claude/.credentials.json';
@@ -139,12 +139,13 @@ function isCacheValid<T>(
 // Claude CLI reader
 // ---------------------------------------------------------------------------
 
-function readClaudeCliCredential(): CliCredentialResult | null {
-  // 1. Try macOS Keychain
-  const keychainSecret = readKeychainSecret(CLAUDE_KEYCHAIN_SERVICE);
-  if (keychainSecret) {
-    const cred = parseClaudeKeychainData(keychainSecret);
-    if (cred) return cred;
+function readClaudeCliCredential(options?: { includeKeychain?: boolean }): CliCredentialResult | null {
+  if (options?.includeKeychain !== false) {
+    const keychainSecret = readKeychainSecret(CLAUDE_KEYCHAIN_SERVICE);
+    if (keychainSecret) {
+      const cred = parseClaudeKeychainData(keychainSecret);
+      if (cred) return cred;
+    }
   }
 
   // 2. Fall back to credentials file
@@ -187,9 +188,8 @@ function parseClaudeOauth(oauth: unknown): CliCredentialResult | null {
 // Codex CLI reader
 // ---------------------------------------------------------------------------
 
-function readCodexCliCredential(): CliCredentialResult | null {
-  // 1. Try macOS Keychain
-  if (process.platform === 'darwin') {
+function readCodexCliCredential(options?: { includeKeychain?: boolean }): CliCredentialResult | null {
+  if (options?.includeKeychain !== false && process.platform === 'darwin') {
     const codexHome = resolveCodexHomePath();
     const account = computeCodexKeychainAccount(codexHome);
     const keychainSecret = readKeychainSecret('Codex Auth', account);
@@ -343,20 +343,25 @@ function readCached(
  * Read credentials from all known CLI tools.
  * Returns only valid, non-stale credentials. Never throws.
  */
-export function readAllCliCredentials(opts?: { ttlMs?: number }): CliCredentialResult[] {
+export function readAllCliCredentials(opts?: { ttlMs?: number; includeKeychain?: boolean }): CliCredentialResult[] {
   const ttlMs = opts?.ttlMs ?? DEFAULT_TTL_MS;
+  const includeKeychain = opts?.includeKeychain ?? true;
   const results: CliCredentialResult[] = [];
 
   try {
     // Claude
     const claudeKey = join(home(), CLAUDE_CRED_PATH);
-    const claudeResult = readCached(claudeCache, claudeKey, ttlMs, readClaudeCliCredential);
+    const claudeResult = readCached(claudeCache, claudeKey, ttlMs, () =>
+      readClaudeCliCredential({ includeKeychain }),
+    );
     claudeCache = claudeResult.cache;
     if (claudeResult.result) results.push(claudeResult.result);
 
     // Codex
     const codexKey = join(resolveCodexHomePath(), CODEX_AUTH_FILENAME);
-    const codexResult = readCached(codexCache, codexKey, ttlMs, readCodexCliCredential);
+    const codexResult = readCached(codexCache, codexKey, ttlMs, () =>
+      readCodexCliCredential({ includeKeychain }),
+    );
     codexCache = codexResult.cache;
     if (codexResult.result) results.push(codexResult.result);
 
@@ -382,8 +387,8 @@ export function readAllCliCredentials(opts?: { ttlMs?: number }): CliCredentialR
  * Scan all CLI credential sources and return discovered providers.
  * Suitable for provider discovery/registration flows.
  */
-export function scanCliCredentials(): DiscoveredProvider[] {
-  const credentials = readAllCliCredentials();
+export function scanCliCredentials(opts?: { includeKeychain?: boolean }): DiscoveredProvider[] {
+  const credentials = readAllCliCredentials({ includeKeychain: opts?.includeKeychain ?? true });
   return credentials.map((cred) => ({
     providerId: cred.providerId,
     source: 'cli-credential' as DiscoveredProvider['source'],
