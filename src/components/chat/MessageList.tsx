@@ -12,14 +12,36 @@ interface MessageListProps {
 export function MessageList({ messages, isStreaming }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const streamScrollFrameRef = useRef<number | null>(null);
 
-  // Auto-scroll to bottom when messages change or during streaming
   useEffect(() => {
     const el = bottomRef.current;
-    if (el) {
-      el.scrollIntoView({ behavior: isStreaming ? 'auto' : 'smooth' });
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth' });
+  }, [messages.length]);
+
+  useEffect(() => {
+    if (!isStreaming) {
+      if (streamScrollFrameRef.current !== null) {
+        cancelAnimationFrame(streamScrollFrameRef.current);
+        streamScrollFrameRef.current = null;
+      }
+      return;
     }
-  }, [messages, isStreaming]);
+
+    const tick = () => {
+      bottomRef.current?.scrollIntoView({ behavior: 'auto' });
+      streamScrollFrameRef.current = requestAnimationFrame(tick);
+    };
+    streamScrollFrameRef.current = requestAnimationFrame(tick);
+
+    return () => {
+      if (streamScrollFrameRef.current !== null) {
+        cancelAnimationFrame(streamScrollFrameRef.current);
+        streamScrollFrameRef.current = null;
+      }
+    };
+  }, [isStreaming]);
 
   if (messages.length === 0) {
     return (

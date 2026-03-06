@@ -57,6 +57,9 @@ export default defineConfig({
   },
   server: {
     port: 5174,
+    watch: {
+      ignored: ['**/.clawdesktop2-session/**', '**/.clawdesktop2-data/**'],
+    },
   },
   build: {
     outDir: 'dist',

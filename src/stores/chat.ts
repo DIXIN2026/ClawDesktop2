@@ -152,6 +152,38 @@ export const useChatStore = create<ChatState>((set, get) => {
   let streamCleanup: (() => void) | undefined;
   let approvalCleanup: (() => void) | undefined;
   let clarificationExpiryTimer: ReturnType<typeof setTimeout> | undefined;
+  let pendingStreamDelta = '';
+  let streamDeltaFlushTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function flushPendingStreamDelta() {
+    if (!pendingStreamDelta) return;
+    const delta = pendingStreamDelta;
+    pendingStreamDelta = '';
+    set((state) => {
+      const lastIdx = state.messages.length - 1;
+      const last = state.messages[lastIdx];
+      if (!last || !last.isStreaming) return state;
+      const messages = [...state.messages];
+      messages[lastIdx] = { ...last, content: last.content + delta };
+      return { messages };
+    });
+  }
+
+  function scheduleStreamDeltaFlush() {
+    if (streamDeltaFlushTimer) return;
+    streamDeltaFlushTimer = setTimeout(() => {
+      streamDeltaFlushTimer = undefined;
+      flushPendingStreamDelta();
+    }, 16);
+  }
+
+  function clearPendingStreamDelta() {
+    if (streamDeltaFlushTimer) {
+      clearTimeout(streamDeltaFlushTimer);
+      streamDeltaFlushTimer = undefined;
+    }
+    pendingStreamDelta = '';
+  }
 
   function clearClarificationExpiryTimer() {
     if (clarificationExpiryTimer) {
@@ -238,12 +270,15 @@ export const useChatStore = create<ChatState>((set, get) => {
             ? streamEvent.sessionId
             : get().currentSessionId;
           if (previewUrl && targetSessionId) {
-            set((s) => ({
-              previewUrls: {
-                ...s.previewUrls,
-                [targetSessionId]: previewUrl,
-              },
-            }));
+            set((s) => {
+              if (s.previewUrls[targetSessionId] === previewUrl) return s;
+              return {
+                previewUrls: {
+                  ...s.previewUrls,
+                  [targetSessionId]: previewUrl,
+                },
+              };
+            });
           }
         } else if (event.type === 'approval_req') {
           // Surface approval request from agent stream
@@ -255,14 +290,26 @@ export const useChatStore = create<ChatState>((set, get) => {
             timestamp?: number;
           };
           if (approvalData.approvalId) {
-            set({
-              pendingApproval: {
-                id: approvalData.approvalId,
-                sessionId: approvalData.sessionId ?? '',
-                action: approvalData.action ?? 'shell-command',
-                details: approvalData.details ?? '',
-                timestamp: approvalData.timestamp ?? Date.now(),
-              },
+            const nextApproval = {
+              id: approvalData.approvalId,
+              sessionId: approvalData.sessionId ?? '',
+              action: approvalData.action ?? 'shell-command',
+              details: approvalData.details ?? '',
+              timestamp: approvalData.timestamp ?? Date.now(),
+            };
+            set((s) => {
+              const current = s.pendingApproval;
+              if (
+                current
+                && current.id === nextApproval.id
+                && current.sessionId === nextApproval.sessionId
+                && current.action === nextApproval.action
+                && current.details === nextApproval.details
+                && current.timestamp === nextApproval.timestamp
+              ) {
+                return s;
+              }
+              return { pendingApproval: nextApproval };
             });
           }
         } else if (event.type === 'clarification_req') {
@@ -296,16 +343,25 @@ export const useChatStore = create<ChatState>((set, get) => {
             }
           }
         } else if (event.type === 'turn_end') {
+          flushPendingStreamDelta();
           clearClarificationExpiryTimer();
           set((s) => {
+            if (!s.isStreaming && !s.pendingClarification && !s.messages.some((m) => m.isStreaming)) {
+              return s;
+            }
             const messages = s.messages.map((m) =>
               m.isStreaming ? { ...m, isStreaming: false } : m,
             );
             return { isStreaming: false, messages, pendingClarification: null };
           });
         } else if (event.type === 'error') {
+          flushPendingStreamDelta();
           clearClarificationExpiryTimer();
           set((s) => {
+            if (!s.messages.some((m) => m.isStreaming)) {
+              if (!s.isStreaming && !s.pendingClarification) return s;
+              return { isStreaming: false, pendingClarification: null };
+            }
             const messages = s.messages.map((m) =>
               m.isStreaming
                 ? { ...m, isStreaming: false, content: m.content + `\n\n[Error: ${(event.errorMessage ?? event.content) as string ?? 'Unknown error'}]` }
@@ -323,7 +379,19 @@ export const useChatStore = create<ChatState>((set, get) => {
         if (request?.sessionId && activeSessionId && request.sessionId !== activeSessionId) {
           return;
         }
-        set({ pendingApproval: request });
+        set((s) => {
+          const current = s.pendingApproval;
+          if (
+            current?.id === request?.id
+            && current?.sessionId === request?.sessionId
+            && current?.action === request?.action
+            && current?.details === request?.details
+            && current?.timestamp === request?.timestamp
+          ) {
+            return s;
+          }
+          return { pendingApproval: request };
+        });
       });
     }
   }
@@ -380,6 +448,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
 
     selectSession: async (sessionId) => {
+      clearPendingStreamDelta();
       clearClarificationExpiryTimer();
       set({
         currentSessionId: sessionId,
@@ -393,6 +462,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
 
     deleteSession: async (sessionId) => {
+      clearPendingStreamDelta();
       await ipc.deleteSession(sessionId);
       set((state) => {
         const sessions = state.sessions.filter((s) => s.id !== sessionId);
@@ -484,11 +554,15 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
 
     abortGeneration: async () => {
+      flushPendingStreamDelta();
       const { currentSessionId } = get();
       if (currentSessionId) {
         await ipc.abortChat(currentSessionId);
       }
       set((state) => {
+        if (!state.isStreaming && !state.messages.some((m) => m.isStreaming)) {
+          return state;
+        }
         const messages = state.messages.map((m) =>
           m.isStreaming ? { ...m, isStreaming: false, content: m.content + '\n\n[Aborted]' } : m,
         );
@@ -503,9 +577,12 @@ export const useChatStore = create<ChatState>((set, get) => {
       try {
         await ipc.switchModel(currentSessionId, providerId, modelId);
         set((state) => ({
-          sessions: state.sessions.map((s) =>
-            s.id === currentSessionId ? { ...s, currentModel: `${providerId}/${modelId}` } : s,
-          ),
+          sessions: state.sessions.map((s) => {
+            if (s.id !== currentSessionId) return s;
+            const nextModel = `${providerId}/${modelId}`;
+            if (s.currentModel === nextModel) return s;
+            return { ...s, currentModel: nextModel };
+          }),
         }));
       } catch (err) {
         console.error('[Chat] switchModel failed:', err instanceof Error ? err.message : String(err));
@@ -514,47 +591,54 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
 
     appendStreamDelta: (delta) => {
-      set((state) => {
-        const messages = [...state.messages];
-        const lastIdx = messages.length - 1;
-        const last = messages[lastIdx];
-        if (last && last.isStreaming) {
-          messages[lastIdx] = { ...last, content: last.content + delta };
-        }
-        return { messages };
-      });
+      pendingStreamDelta += delta;
+      scheduleStreamDeltaFlush();
     },
 
     addToolCall: (toolCall) => {
       set((state) => {
+        const lastIdx = state.messages.length - 1;
+        const last = state.messages[lastIdx];
+        if (!last || !last.isStreaming) return state;
         const messages = [...state.messages];
-        const lastIdx = messages.length - 1;
-        const last = messages[lastIdx];
-        if (last && last.isStreaming) {
-          const existing = last.toolCalls ?? [];
-          messages[lastIdx] = { ...last, toolCalls: [...existing, toolCall] };
-        }
+        const existing = last.toolCalls ?? [];
+        messages[lastIdx] = { ...last, toolCalls: [...existing, toolCall] };
         return { messages };
       });
     },
 
     updateToolCall: (toolCallId, updates) => {
       set((state) => {
+        const lastIdx = state.messages.length - 1;
+        const last = state.messages[lastIdx];
+        if (!last?.toolCalls || last.toolCalls.length === 0) return state;
+        let changed = false;
+        const toolCalls = last.toolCalls.map((tc) => {
+          if (tc.id !== toolCallId) return tc;
+          changed = true;
+          return { ...tc, ...updates };
+        });
+        if (!changed) return state;
         const messages = [...state.messages];
-        const lastIdx = messages.length - 1;
-        const last = messages[lastIdx];
-        if (last?.toolCalls) {
-          const toolCalls = last.toolCalls.map((tc) =>
-            tc.id === toolCallId ? { ...tc, ...updates } : tc,
-          );
-          messages[lastIdx] = { ...last, toolCalls };
-        }
+        messages[lastIdx] = { ...last, toolCalls };
         return { messages };
       });
     },
 
     setApproval: (approval) => {
-      set({ pendingApproval: approval });
+      set((state) => {
+        const current = state.pendingApproval;
+        if (
+          current?.id === approval?.id
+          && current?.sessionId === approval?.sessionId
+          && current?.action === approval?.action
+          && current?.details === approval?.details
+          && current?.timestamp === approval?.timestamp
+        ) {
+          return state;
+        }
+        return { pendingApproval: approval };
+      });
     },
 
     respondToApproval: async (approvalId, approved) => {
@@ -600,15 +684,16 @@ export const useChatStore = create<ChatState>((set, get) => {
         .agentDefaults
         .find((d) => d.agentType === agentType)?.primaryModel;
       set((state) => ({
-        sessions: state.sessions.map((s) =>
-          s.id === currentSessionId
-            ? {
-                ...s,
-                agentId: agentType,
-                currentModel: defaultModel && defaultModel.includes('/') ? defaultModel : s.currentModel,
-              }
-            : s,
-        ),
+        sessions: state.sessions.map((s) => {
+          if (s.id !== currentSessionId) return s;
+          const nextModel = defaultModel && defaultModel.includes('/') ? defaultModel : s.currentModel;
+          if (s.agentId === agentType && s.currentModel === nextModel) return s;
+          return {
+            ...s,
+            agentId: agentType,
+            currentModel: nextModel,
+          };
+        }),
       }));
     },
   };

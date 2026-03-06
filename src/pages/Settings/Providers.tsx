@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Check, X, Search, Terminal, Plus } from 'lucide-react';
+import { Check, X, Search, Terminal, Plus, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -32,6 +32,7 @@ export function ProvidersSettings() {
     providers,
     cliAgents,
     discovered,
+    isDiscovering,
     agentDefaults,
     selectedCliBackend,
     setSelectedCliBackend,
@@ -42,12 +43,18 @@ export function ProvidersSettings() {
   const [savingKeys, setSavingKeys] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    runDiscovery();
-  }, [runDiscovery]);
+    if (discovered.length === 0 && cliAgents.length === 0 && !isDiscovering) {
+      void runDiscovery();
+    }
+  }, [discovered.length, cliAgents.length, isDiscovering, runDiscovery]);
 
   const handleApiKeyChange = useCallback((providerId: string, value: string) => {
     setApiKeyInputs((prev) => ({ ...prev, [providerId]: value }));
   }, []);
+
+  const handleRefreshDiscovery = useCallback(() => {
+    void runDiscovery();
+  }, [runDiscovery]);
 
   const handleSaveApiKey = useCallback(async (providerId: string) => {
     const key = apiKeyInputs[providerId]?.trim();
@@ -60,7 +67,7 @@ export function ProvidersSettings() {
       await window.electron?.ipcRenderer.invoke('providers:setApiKey', providerId, key);
       setApiKeyInputs((prev) => ({ ...prev, [providerId]: '' }));
       toast.success(`${providerId} API Key 已保存`);
-      runDiscovery();
+      void runDiscovery();
     } catch (err) {
       toast.error(`保存失败: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -83,7 +90,30 @@ export function ProvidersSettings() {
         <p className="text-sm text-muted-foreground mt-1">
           配置 AI 模型供应商和 CLI 智能体后端。
         </p>
+        <div className="mt-3">
+          <Button variant="outline" size="sm" onClick={handleRefreshDiscovery} disabled={isDiscovering}>
+            {isDiscovering ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                正在检测...
+              </>
+            ) : (
+              '重新检测'
+            )}
+          </Button>
+        </div>
       </div>
+
+      {isDiscovering && (
+        <Card>
+          <CardContent className="py-4">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              正在异步检测本地 CLI、环境变量与本地服务状态...
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Discovery results */}
       {discovered.length > 0 && (
@@ -308,7 +338,7 @@ export function ProvidersSettings() {
                 isBuiltin: false,
               }).then(() => {
                 toast.success('自定义端点已添加');
-                runDiscovery();
+                void runDiscovery();
               }).catch((err: unknown) => {
                 toast.error(`添加失败: ${err instanceof Error ? err.message : String(err)}`);
               });

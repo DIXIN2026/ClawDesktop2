@@ -155,7 +155,7 @@ const DEFAULT_AGENT_MODELS: AgentDefaultModel[] = [
   { agentType: 'testing', primaryModel: '', fallbackModel: '' },
 ];
 
-export const useProvidersStore = create<ProvidersState>((set) => ({
+export const useProvidersStore = create<ProvidersState>((set, get) => ({
   providers: BUILTIN_PROVIDERS,
   cliAgents: [],
   discovered: [],
@@ -187,6 +187,9 @@ export const useProvidersStore = create<ProvidersState>((set) => ({
   },
 
   runDiscovery: async () => {
+    if (get().isDiscovering) {
+      return;
+    }
     set({ isDiscovering: true });
     try {
       const result = await ipc.discoverProviders();

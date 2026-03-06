@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   Plus, LayoutGrid, List, Search, Filter, Bug, FileText, Bookmark,
   Circle, ArrowUp, ArrowDown, Minus, AlertTriangle, ChevronDown, X, GripVertical,
@@ -28,7 +28,7 @@ const ISSUE_TYPE_CONFIG: Record<IssueType, { label: string; icon: typeof FileTex
 
 // ── Issue Card ────────────────────────────────────────────────────────
 
-function IssueCard({ issue, onSelect, onDragStart }: {
+const IssueCard = memo(function IssueCard({ issue, onSelect, onDragStart }: {
   issue: BoardIssue;
   onSelect: (id: string) => void;
   onDragStart: (e: React.DragEvent, issueId: string) => void;
@@ -72,11 +72,109 @@ function IssueCard({ issue, onSelect, onDragStart }: {
       </div>
     </div>
   );
-}
+});
+
+const VirtualIssueList = memo(function VirtualIssueList({ issues, onSelect, onDragStart }: {
+  issues: BoardIssue[];
+  onSelect: (id: string) => void;
+  onDragStart: (e: React.DragEvent, issueId: string) => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const firstItemRef = useRef<HTMLDivElement | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [rowHeight, setRowHeight] = useState(108);
+  const rowGap = 8;
+  const rowStride = rowHeight + rowGap;
+  const overscan = 6;
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setViewportHeight(el.clientHeight);
+  }, []);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const update = () => setViewportHeight(el.clientHeight);
+    update();
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => update());
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
+
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const nextTop = el.scrollTop;
+    if (rafRef.current !== null) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      setScrollTop(nextTop);
+    });
+  }, []);
+
+  useEffect(() => () => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    const el = firstItemRef.current;
+    if (!el) return;
+    const h = Math.round(el.getBoundingClientRect().height);
+    if (h > 24 && h !== rowHeight) {
+      setRowHeight(h);
+    }
+  }, [issues.length, rowHeight]);
+
+  const totalHeight = issues.length * rowStride - (issues.length > 0 ? rowGap : 0);
+  const startIndex = Math.max(0, Math.floor(scrollTop / rowStride) - overscan);
+  const endIndex = Math.min(
+    issues.length - 1,
+    Math.ceil((scrollTop + viewportHeight) / rowStride) + overscan,
+  );
+
+  const visible = useMemo(
+    () => issues.slice(startIndex, endIndex + 1),
+    [endIndex, issues, startIndex],
+  );
+
+  return (
+    <div ref={scrollRef} className="flex-1 overflow-y-auto p-2" onScroll={handleScroll}>
+      <div className="relative" style={{ height: totalHeight }}>
+        {visible.map((issue, i) => {
+          const absoluteIndex = startIndex + i;
+          return (
+            <div
+              key={issue.id}
+              ref={absoluteIndex === 0 ? firstItemRef : null}
+              className="absolute left-0 right-0"
+              style={{ top: absoluteIndex * rowStride }}
+            >
+              <IssueCard issue={issue} onSelect={onSelect} onDragStart={onDragStart} />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+});
 
 // ── Issue Column ──────────────────────────────────────────────────────
 
-function IssueColumn({ state, issues, onSelect, onDrop, onDragStart, onCreateInState }: {
+const IssueColumn = memo(function IssueColumn({ state, issues, onSelect, onDrop, onDragStart, onCreateInState }: {
   state: BoardState;
   issues: BoardIssue[];
   onSelect: (id: string) => void;
@@ -108,14 +206,10 @@ function IssueColumn({ state, issues, onSelect, onDrop, onDragStart, onCreateInS
           <Plus className="w-4 h-4" />
         </button>
       </div>
-      <div className="flex-1 overflow-y-auto p-2 space-y-2">
-        {issues.map((issue) => (
-          <IssueCard key={issue.id} issue={issue} onSelect={onSelect} onDragStart={onDragStart} />
-        ))}
-      </div>
+      <VirtualIssueList issues={issues} onSelect={onSelect} onDragStart={onDragStart} />
     </div>
   );
-}
+});
 
 // ── Issue Detail Panel ────────────────────────────────────────────────
 
@@ -129,12 +223,51 @@ function IssueDetailPanel({ issue, states, onClose, onUpdate, onDelete, onStart 
 }) {
   const [title, setTitle] = useState(issue.title);
   const [desc, setDesc] = useState(issue.description ?? '');
+  const [draftStateId, setDraftStateId] = useState(issue.state_id);
+  const [draftPriority, setDraftPriority] = useState<IssuePriority>(issue.priority);
+  const [draftIssueType, setDraftIssueType] = useState<IssueType>(issue.issue_type);
+  const [draftAssignee, setDraftAssignee] = useState(issue.assignee ?? '');
   const [starting, setStarting] = useState(false);
 
   useEffect(() => {
     setTitle(issue.title);
     setDesc(issue.description ?? '');
-  }, [issue.id, issue.title, issue.description]);
+    setDraftStateId(issue.state_id);
+    setDraftPriority(issue.priority);
+    setDraftIssueType(issue.issue_type);
+    setDraftAssignee(issue.assignee ?? '');
+  }, [issue.assignee, issue.description, issue.id, issue.issue_type, issue.priority, issue.state_id, issue.title]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const currentAssignee = issue.assignee ?? '';
+      if (draftAssignee !== currentAssignee) {
+        onUpdate(issue.id, { assignee: draftAssignee || null });
+      }
+    }, 220);
+    return () => clearTimeout(timer);
+  }, [draftAssignee, issue.assignee, issue.id, onUpdate]);
+
+  const handleStateChange = useCallback((value: string) => {
+    setDraftStateId(value);
+    if (value !== issue.state_id) {
+      onUpdate(issue.id, { state_id: value } as Partial<BoardIssue>);
+    }
+  }, [issue.id, issue.state_id, onUpdate]);
+
+  const handlePriorityChange = useCallback((value: IssuePriority) => {
+    setDraftPriority(value);
+    if (value !== issue.priority) {
+      onUpdate(issue.id, { priority: value });
+    }
+  }, [issue.id, issue.priority, onUpdate]);
+
+  const handleIssueTypeChange = useCallback((value: IssueType) => {
+    setDraftIssueType(value);
+    if (value !== issue.issue_type) {
+      onUpdate(issue.id, { issue_type: value });
+    }
+  }, [issue.id, issue.issue_type, onUpdate]);
 
   return (
     <div className="w-[400px] border-l border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 overflow-y-auto">
@@ -162,8 +295,8 @@ function IssueDetailPanel({ issue, states, onClose, onUpdate, onDelete, onStart 
         <div className="space-y-3">
           <DetailRow label="状态">
             <select
-              value={issue.state_id}
-              onChange={(e) => onUpdate(issue.id, { state_id: e.target.value } as Partial<BoardIssue>)}
+              value={draftStateId}
+              onChange={(e) => handleStateChange(e.target.value)}
               className="text-sm bg-transparent border border-zinc-200 dark:border-zinc-600 rounded px-2 py-1"
             >
               {states.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -171,8 +304,8 @@ function IssueDetailPanel({ issue, states, onClose, onUpdate, onDelete, onStart 
           </DetailRow>
           <DetailRow label="优先级">
             <select
-              value={issue.priority}
-              onChange={(e) => onUpdate(issue.id, { priority: e.target.value as IssuePriority })}
+              value={draftPriority}
+              onChange={(e) => handlePriorityChange(e.target.value as IssuePriority)}
               className="text-sm bg-transparent border border-zinc-200 dark:border-zinc-600 rounded px-2 py-1"
             >
               {Object.entries(PRIORITY_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
@@ -180,8 +313,8 @@ function IssueDetailPanel({ issue, states, onClose, onUpdate, onDelete, onStart 
           </DetailRow>
           <DetailRow label="类型">
             <select
-              value={issue.issue_type}
-              onChange={(e) => onUpdate(issue.id, { issue_type: e.target.value as IssueType })}
+              value={draftIssueType}
+              onChange={(e) => handleIssueTypeChange(e.target.value as IssueType)}
               className="text-sm bg-transparent border border-zinc-200 dark:border-zinc-600 rounded px-2 py-1"
             >
               {Object.entries(ISSUE_TYPE_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
@@ -189,8 +322,8 @@ function IssueDetailPanel({ issue, states, onClose, onUpdate, onDelete, onStart 
           </DetailRow>
           <DetailRow label="负责人">
             <input
-              value={issue.assignee ?? ''}
-              onChange={(e) => onUpdate(issue.id, { assignee: e.target.value || null })}
+              value={draftAssignee}
+              onChange={(e) => setDraftAssignee(e.target.value)}
               placeholder="未分配"
               className="text-sm bg-transparent border border-zinc-200 dark:border-zinc-600 rounded px-2 py-1 w-32"
             />
@@ -309,23 +442,36 @@ function CreateIssueDialog({ stateId, states, onClose, onCreate }: {
 
 // ── Filter Bar ────────────────────────────────────────────────────────
 
-function FilterBar({ groupBy, viewMode, filters, onGroupChange, onViewChange, onFilterChange, onSearch }: {
+const FilterBar = memo(function FilterBar({ groupBy, viewMode, filters, onGroupChange, onViewChange, onFilterChange, onSearch }: {
   groupBy: GroupBy;
   viewMode: 'board' | 'list';
-  filters: { priority?: IssuePriority; issueType?: IssueType };
+  filters: { priority?: IssuePriority; issueType?: IssueType; search?: string };
   onGroupChange: (g: GroupBy) => void;
   onViewChange: (m: 'board' | 'list') => void;
-  onFilterChange: (f: { priority?: IssuePriority; issueType?: IssueType }) => void;
+  onFilterChange: (f: { priority?: IssuePriority; issueType?: IssueType; search?: string }) => void;
   onSearch: (q: string) => void;
 }) {
   const [showFilters, setShowFilters] = useState(false);
+  const [searchInput, setSearchInput] = useState(filters.search ?? '');
+
+  useEffect(() => {
+    setSearchInput(filters.search ?? '');
+  }, [filters.search]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      onSearch(searchInput);
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [onSearch, searchInput]);
 
   return (
     <div className="panel-surface flex items-center gap-3 px-4 py-3">
       <div className="relative flex-1 max-w-xs">
         <Search className="w-4 h-4 absolute left-2.5 top-2 text-zinc-400" />
         <input
-          onChange={(e) => onSearch(e.target.value)}
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
           placeholder="搜索任务..."
           className="w-full rounded-lg border border-border/80 bg-background/80 py-1.5 pl-8 pr-3 text-sm"
         />
@@ -387,19 +533,77 @@ function FilterBar({ groupBy, viewMode, filters, onGroupChange, onViewChange, on
       )}
     </div>
   );
-}
+});
 
 // ── List View ─────────────────────────────────────────────────────────
 
-function ListView({ issues, states, onSelect }: {
+const ListView = memo(function ListView({ issues, states, onSelect }: {
   issues: BoardIssue[];
   states: BoardState[];
   onSelect: (id: string) => void;
 }) {
-  const stateMap = new Map(states.map((s) => [s.id, s]));
+  const stateMap = useMemo(() => new Map(states.map((s) => [s.id, s])), [states]);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const rowHeight = 46;
+  const overscan = 10;
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setViewportHeight(el.clientHeight);
+  }, []);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const update = () => setViewportHeight(el.clientHeight);
+    update();
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => update());
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
+
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const nextTop = el.scrollTop;
+    if (rafRef.current !== null) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      setScrollTop(nextTop);
+    });
+  }, []);
+
+  useEffect(() => () => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+  }, []);
+
+  const startIndex = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
+  const endIndex = Math.min(
+    issues.length - 1,
+    Math.ceil((scrollTop + viewportHeight) / rowHeight) + overscan,
+  );
+  const visibleIssues = useMemo(
+    () => issues.slice(startIndex, endIndex + 1),
+    [endIndex, issues, startIndex],
+  );
+  const topSpacerHeight = startIndex * rowHeight;
+  const bottomSpacerHeight = Math.max(0, (issues.length - endIndex - 1) * rowHeight);
 
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div ref={scrollRef} className="flex-1 overflow-y-auto" onScroll={handleScroll}>
       <table className="w-full">
         <thead className="sticky top-0 bg-zinc-50 dark:bg-zinc-900">
           <tr className="text-xs text-zinc-500 border-b border-zinc-200 dark:border-zinc-700">
@@ -412,7 +616,12 @@ function ListView({ issues, states, onSelect }: {
           </tr>
         </thead>
         <tbody>
-          {issues.map((issue) => {
+          {topSpacerHeight > 0 && (
+            <tr>
+              <td colSpan={6} style={{ height: topSpacerHeight }} />
+            </tr>
+          )}
+          {visibleIssues.map((issue) => {
             const state = stateMap.get(issue.state_id);
             const pCfg = PRIORITY_CONFIG[issue.priority];
             const tCfg = ISSUE_TYPE_CONFIG[issue.issue_type];
@@ -450,28 +659,59 @@ function ListView({ issues, states, onSelect }: {
               </tr>
             );
           })}
+          {bottomSpacerHeight > 0 && (
+            <tr>
+              <td colSpan={6} style={{ height: bottomSpacerHeight }} />
+            </tr>
+          )}
         </tbody>
       </table>
     </div>
   );
-}
+});
 
 // ── Main Tasks Page ───────────────────────────────────────────────────
 
 export default function TasksPage() {
-  const store = useBoardStore();
+  const states = useBoardStore((s) => s.states);
+  const issues = useBoardStore((s) => s.issues);
+  const groupBy = useBoardStore((s) => s.groupBy);
+  const viewMode = useBoardStore((s) => s.viewMode);
+  const filters = useBoardStore((s) => s.filters);
+  const selectedIssueId = useBoardStore((s) => s.selectedIssueId);
+  const loadBoard = useBoardStore((s) => s.loadBoard);
+  const setGroupBy = useBoardStore((s) => s.setGroupBy);
+  const setViewMode = useBoardStore((s) => s.setViewMode);
+  const setFilters = useBoardStore((s) => s.setFilters);
+  const selectIssue = useBoardStore((s) => s.selectIssue);
+  const createIssue = useBoardStore((s) => s.createIssue);
+  const updateIssue = useBoardStore((s) => s.updateIssue);
+  const moveIssue = useBoardStore((s) => s.moveIssue);
+  const deleteIssue = useBoardStore((s) => s.deleteIssue);
   const navigate = useNavigate();
   const [createDialogState, setCreateDialogState] = useState<string | null>(null);
   const [dragIssueId, setDragIssueId] = useState<string | null>(null);
 
   useEffect(() => {
-    store.loadBoard();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    void loadBoard();
+  }, [loadBoard]);
 
-  const filteredIssues = store.getFilteredIssues();
-  const selectedIssue = store.selectedIssueId
-    ? filteredIssues.find((i) => i.id === store.selectedIssueId) ?? null
-    : null;
+  const filteredIssues = useMemo(() => issues.filter((issue) => {
+    if (filters.priority && issue.priority !== filters.priority) return false;
+    if (filters.issueType && issue.issue_type !== filters.issueType) return false;
+    if (filters.assignee && issue.assignee !== filters.assignee) return false;
+    if (filters.search) {
+      const q = filters.search.toLowerCase();
+      if (!issue.title.toLowerCase().includes(q) && !issue.description?.toLowerCase().includes(q)) {
+        return false;
+      }
+    }
+    return true;
+  }), [filters.assignee, filters.issueType, filters.priority, filters.search, issues]);
+  const selectedIssue = useMemo(
+    () => (selectedIssueId ? filteredIssues.find((i) => i.id === selectedIssueId) ?? null : null),
+    [filteredIssues, selectedIssueId],
+  );
 
   const handleDragStart = useCallback((e: React.DragEvent, issueId: string) => {
     setDragIssueId(issueId);
@@ -481,17 +721,17 @@ export default function TasksPage() {
   const handleDrop = useCallback((e: React.DragEvent, targetStateId: string) => {
     e.preventDefault();
     if (dragIssueId) {
-      store.moveIssue(dragIssueId, targetStateId, Date.now());
+      void moveIssue(dragIssueId, targetStateId, Date.now());
       setDragIssueId(null);
     }
-  }, [dragIssueId, store]);
+  }, [dragIssueId, moveIssue]);
 
   const handleCreate = useCallback(async (data: {
     title: string; stateId: string; priority: IssuePriority; issueType: IssueType; description?: string;
   }) => {
-    await store.createIssue(data);
+    await createIssue(data);
     setCreateDialogState(null);
-  }, [store]);
+  }, [createIssue]);
 
   const handleStartIssue = useCallback(async (issue: BoardIssue) => {
     try {
@@ -503,15 +743,22 @@ export default function TasksPage() {
     }
   }, [navigate]);
 
+  const handleSearch = useCallback((q: string) => {
+    setFilters({ ...filters, search: q || undefined });
+  }, [filters, setFilters]);
+
   // Group issues by state for board view
-  const issuesByState = new Map<string, BoardIssue[]>();
-  for (const state of store.states) {
-    issuesByState.set(state.id, []);
-  }
-  for (const issue of filteredIssues) {
-    const group = issuesByState.get(issue.state_id);
-    if (group) group.push(issue);
-  }
+  const issuesByState = useMemo(() => {
+    const groups = new Map<string, BoardIssue[]>();
+    for (const state of states) {
+      groups.set(state.id, []);
+    }
+    for (const issue of filteredIssues) {
+      const group = groups.get(issue.state_id);
+      if (group) group.push(issue);
+    }
+    return groups;
+  }, [filteredIssues, states]);
 
   return (
     <div className="page-shell">
@@ -519,7 +766,7 @@ export default function TasksPage() {
       <div className="page-header flex items-center justify-between">
         <h1 className="text-lg font-semibold">任务看板</h1>
         <button
-          onClick={() => setCreateDialogState(store.states[1]?.id ?? store.states[0]?.id ?? '')}
+          onClick={() => setCreateDialogState(states[1]?.id ?? states[0]?.id ?? '')}
           className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90"
         >
           <Plus className="w-4 h-4" />
@@ -528,25 +775,25 @@ export default function TasksPage() {
       </div>
 
       <FilterBar
-        groupBy={store.groupBy}
-        viewMode={store.viewMode}
-        filters={store.filters}
-        onGroupChange={store.setGroupBy}
-        onViewChange={store.setViewMode}
-        onFilterChange={store.setFilters}
-        onSearch={(q) => store.setFilters({ ...store.filters, search: q || undefined })}
+        groupBy={groupBy}
+        viewMode={viewMode}
+        filters={filters}
+        onGroupChange={setGroupBy}
+        onViewChange={setViewMode}
+        onFilterChange={setFilters}
+        onSearch={handleSearch}
       />
 
       <div className="panel-surface flex flex-1 overflow-hidden">
         <div className="flex-1 overflow-auto">
-          {store.viewMode === 'board' ? (
+          {viewMode === 'board' ? (
             <div className="flex h-full gap-3 p-4">
-              {store.states.map((state) => (
+              {states.map((state) => (
                 <IssueColumn
                   key={state.id}
                   state={state}
                   issues={issuesByState.get(state.id) ?? []}
-                  onSelect={store.selectIssue}
+                  onSelect={selectIssue}
                   onDrop={handleDrop}
                   onDragStart={handleDragStart}
                   onCreateInState={(stateId) => setCreateDialogState(stateId)}
@@ -554,17 +801,17 @@ export default function TasksPage() {
               ))}
             </div>
           ) : (
-            <ListView issues={filteredIssues} states={store.states} onSelect={store.selectIssue} />
+            <ListView issues={filteredIssues} states={states} onSelect={selectIssue} />
           )}
         </div>
 
         {selectedIssue && (
           <IssueDetailPanel
             issue={selectedIssue}
-            states={store.states}
-            onClose={() => store.selectIssue(null)}
-            onUpdate={(id, updates) => store.updateIssue(id, updates)}
-            onDelete={(id) => { store.deleteIssue(id); }}
+            states={states}
+            onClose={() => selectIssue(null)}
+            onUpdate={(id, updates) => void updateIssue(id, updates)}
+            onDelete={(id) => { void deleteIssue(id); }}
             onStart={handleStartIssue}
           />
         )}
@@ -573,7 +820,7 @@ export default function TasksPage() {
       {createDialogState !== null && (
         <CreateIssueDialog
           stateId={createDialogState}
-          states={store.states}
+          states={states}
           onClose={() => setCreateDialogState(null)}
           onCreate={handleCreate}
         />

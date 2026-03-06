@@ -43,8 +43,8 @@ export function Sidebar() {
       key={item.path}
       onClick={() => navigate(item.path)}
       className={cn(
-        'no-drag flex h-9 w-9 items-center justify-center rounded-xl border transition-all',
-        'hover:-translate-y-0.5 hover:border-border/80 hover:bg-accent/60 hover:text-foreground',
+        'no-drag flex h-9 w-9 items-center justify-center rounded-xl border transition-colors',
+        'hover:border-border/80 hover:bg-accent/60 hover:text-foreground',
         isActive(item.path)
           ? 'sidebar-active-glow border-primary/28 bg-primary/10 text-primary'
           : 'border-transparent text-muted-foreground/90',
@@ -57,7 +57,7 @@ export function Sidebar() {
 
   return (
     <aside className="h-full w-[var(--sidebar-width)] shrink-0 px-2 py-2">
-      <div className="flex h-full flex-col items-center rounded-[20px] border border-border/70 bg-card/70 p-2 shadow-sm backdrop-blur-xl">
+      <div className="flex h-full flex-col items-center rounded-[20px] border border-border/70 bg-card/85 p-2 shadow-sm">
         <div className="flex flex-1 flex-col items-center gap-1.5 pt-1">
           {NAV_ITEMS.map(renderItem)}
         </div>

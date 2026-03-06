@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { memo, useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Bot, Code, FileText, Palette, TestTube, Settings2, Play, Plus,
   ArrowRight, Trash2, Workflow,
@@ -65,7 +65,7 @@ interface PipelineProgress {
 
 // ── Agent Card ──────────────────────────────────────────────────────
 
-function AgentCard({ agent, onSelect, selected }: {
+const AgentCard = memo(function AgentCard({ agent, onSelect, selected }: {
   agent: AgentConfig;
   onSelect: (id: string) => void;
   selected: boolean;
@@ -110,11 +110,11 @@ function AgentCard({ agent, onSelect, selected }: {
       </div>
     </div>
   );
-}
+});
 
 // ── Agent Config Panel ──────────────────────────────────────────────
 
-function AgentConfigPanel({ agent, onUpdate }: {
+const AgentConfigPanel = memo(function AgentConfigPanel({ agent, onUpdate }: {
   agent: AgentConfig;
   onUpdate: (id: string, updates: Partial<AgentConfig>) => void;
 }) {
@@ -160,11 +160,11 @@ function AgentConfigPanel({ agent, onUpdate }: {
       )}
     </div>
   );
-}
+});
 
 // ── Pipeline Editor ─────────────────────────────────────────────────
 
-function PipelineEditor({ pipeline, progress, onChange, onDelete, onRun }: {
+const PipelineEditor = memo(function PipelineEditor({ pipeline, progress, onChange, onDelete, onRun }: {
   pipeline: Pipeline;
   progress?: PipelineProgress;
   onChange: (p: Pipeline) => void;
@@ -286,12 +286,14 @@ function PipelineEditor({ pipeline, progress, onChange, onDelete, onRun }: {
       </button>
     </div>
   );
-}
+});
 
 // ── Main Page ────────────────────────────────────────────────────────
 
 export default function AgentsPage() {
-  const { agents, loadAgents, updateAgent } = useAgentsStore();
+  const agents = useAgentsStore((s) => s.agents);
+  const loadAgents = useAgentsStore((s) => s.loadAgents);
+  const updateAgent = useAgentsStore((s) => s.updateAgent);
   const defaultWorkDirectory = useSettingsStore((s) => s.workDirectory);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'agents' | 'pipelines'>('agents');
@@ -303,17 +305,34 @@ export default function AgentsPage() {
     loadAgents();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const selected = agents.find((a) => a.id === selectedAgent);
-  const selectedPipe = pipelines.find((p) => p.id === selectedPipeline);
+  const selected = useMemo(
+    () => agents.find((a) => a.id === selectedAgent),
+    [agents, selectedAgent],
+  );
+  const selectedPipe = useMemo(
+    () => pipelines.find((p) => p.id === selectedPipeline),
+    [pipelines, selectedPipeline],
+  );
   const selectedPipelineProgress = selectedPipe ? pipelineProgress[selectedPipe.id] : undefined;
 
   useEffect(() => {
     const unsubscribe = ipc.onOrchestratorProgress((progress) => {
       if (!progress?.pipelineId) return;
-      setPipelineProgress((prev) => ({
-        ...prev,
-        [progress.pipelineId]: progress,
-      }));
+      setPipelineProgress((prev) => {
+        const current = prev[progress.pipelineId];
+        if (
+          current
+          && current.status === progress.status
+          && current.currentStepIndex === progress.currentStepIndex
+          && current.results.length === progress.results.length
+        ) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [progress.pipelineId]: progress,
+        };
+      });
     });
     return () => {
       unsubscribe?.();
@@ -352,6 +371,31 @@ export default function AgentsPage() {
     }
   }, [defaultWorkDirectory]);
 
+  const handleSelectAgent = useCallback((id: string) => {
+    setSelectedAgent(id);
+  }, []);
+
+  const handleSelectPipeline = useCallback((id: string) => {
+    setSelectedPipeline(id);
+  }, []);
+
+  const handleUpdateAgent = useCallback((id: string, updates: Partial<AgentConfig>) => {
+    void updateAgent(id, updates);
+  }, [updateAgent]);
+  const selectedPipeId = selectedPipe?.id;
+  const handlePipelineChange = useCallback((updated: Pipeline) => {
+    setPipelines((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+  }, []);
+  const handleDeletePipeline = useCallback(() => {
+    if (!selectedPipeId) return;
+    setPipelines((prev) => prev.filter((p) => p.id !== selectedPipeId));
+    setSelectedPipeline(null);
+  }, [selectedPipeId]);
+  const handleRunSelectedPipeline = useCallback(() => {
+    if (!selectedPipe) return;
+    void handleRunPipeline(selectedPipe);
+  }, [handleRunPipeline, selectedPipe]);
+
   return (
     <div className="page-shell">
       <div className="page-container h-full max-w-none space-y-3">
@@ -384,7 +428,7 @@ export default function AgentsPage() {
                 <AgentCard
                   key={agent.id}
                   agent={agent}
-                  onSelect={setSelectedAgent}
+                  onSelect={handleSelectAgent}
                   selected={selectedAgent === agent.id}
                 />
               ))}
@@ -396,7 +440,7 @@ export default function AgentsPage() {
             <div className="w-[360px] border-l border-border/70 bg-background/60 p-4 overflow-y-auto">
               <AgentConfigPanel
                 agent={selected}
-                onUpdate={(id, updates) => updateAgent(id, updates)}
+                onUpdate={handleUpdateAgent}
               />
             </div>
           )}
@@ -414,7 +458,7 @@ export default function AgentsPage() {
             {pipelines.map((p) => (
               <div
                 key={p.id}
-                onClick={() => setSelectedPipeline(p.id)}
+                onClick={() => handleSelectPipeline(p.id)}
                 className={`p-2.5 rounded-lg cursor-pointer text-sm ${
                   selectedPipeline === p.id
                     ? 'border border-primary/30 bg-accent text-primary'
@@ -448,14 +492,9 @@ export default function AgentsPage() {
               <PipelineEditor
                 pipeline={selectedPipe}
                 progress={selectedPipelineProgress}
-                onChange={(updated) => {
-                  setPipelines((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-                }}
-                onDelete={() => {
-                  setPipelines((prev) => prev.filter((p) => p.id !== selectedPipe.id));
-                  setSelectedPipeline(null);
-                }}
-                onRun={() => handleRunPipeline(selectedPipe)}
+                onChange={handlePipelineChange}
+                onDelete={handleDeletePipeline}
+                onRun={handleRunSelectedPipeline}
               />
             ) : (
               <div className="flex h-full flex-col items-center justify-center text-muted-foreground">

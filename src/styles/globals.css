@@ -30,7 +30,6 @@
 
   --animate-accordion-down: accordion-down 0.2s ease-out;
   --animate-accordion-up: accordion-up 0.2s ease-out;
-  --animate-active-glow: active-glow 2.8s ease-in-out infinite;
 
   @keyframes accordion-down {
     from { height: 0; }
@@ -42,29 +41,6 @@
     to { height: 0; }
   }
 
-  @keyframes active-glow {
-    0% {
-      box-shadow:
-        inset 0 1px 0 hsl(var(--background) / 0.82),
-        inset 0 0 0 1px hsl(var(--primary) / 0.16),
-        0 0 0 1px hsl(var(--primary) / 0.08),
-        0 10px 24px -18px hsl(var(--primary) / 0.62);
-    }
-    50% {
-      box-shadow:
-        inset 0 1px 0 hsl(var(--background) / 0.88),
-        inset 0 0 0 1px hsl(var(--primary) / 0.2),
-        0 0 0 1px hsl(var(--primary) / 0.14),
-        0 12px 28px -18px hsl(var(--primary) / 0.78);
-    }
-    100% {
-      box-shadow:
-        inset 0 1px 0 hsl(var(--background) / 0.82),
-        inset 0 0 0 1px hsl(var(--primary) / 0.16),
-        0 0 0 1px hsl(var(--primary) / 0.08),
-        0 10px 24px -18px hsl(var(--primary) / 0.62);
-    }
-  }
 }
 
 :root {
@@ -129,12 +105,9 @@
     .page-header,
     .panel-surface
   ) {
-    transition-property: background-color, border-color, color, box-shadow, transform, opacity;
+    transition-property: background-color, border-color, color, opacity;
     transition-duration: var(--motion-hover-duration);
     transition-timing-function: var(--motion-hover-ease);
-  }
-  :where(button, a, [role='button']):where(:not(:disabled)):active {
-    transform: translateY(1px) scale(0.985);
   }
   body {
     @apply bg-background text-foreground;
@@ -183,6 +156,16 @@
 
 .no-drag {
   -webkit-app-region: no-drag;
+}
+
+.scrollbar-hidden {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hidden::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 /* Prose styling for markdown */
@@ -239,14 +222,17 @@
   }
 
   .page-header {
-    @apply rounded-2xl border border-border/70 bg-card/60 p-5 shadow-sm backdrop-blur;
+    @apply rounded-2xl border border-border/70 bg-card/80 p-5 shadow-sm;
   }
 
   .panel-surface {
-    @apply rounded-2xl border border-border/70 bg-card/60 shadow-sm backdrop-blur;
+    @apply rounded-2xl border border-border/70 bg-card/80 shadow-sm;
   }
 
   .sidebar-active-glow {
-    animation: var(--animate-active-glow);
+    box-shadow:
+      inset 0 1px 0 hsl(var(--background) / 0.9),
+      inset 0 0 0 1px hsl(var(--primary) / 0.18),
+      0 8px 18px -14px hsl(var(--primary) / 0.55);
   }
 }

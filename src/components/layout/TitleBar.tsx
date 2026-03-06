@@ -8,7 +8,7 @@ export function TitleBar() {
   const handleClose = () => window.electron?.ipcRenderer.invoke('window:close');
 
   return (
-    <div className="drag-region flex h-10 shrink-0 items-center justify-between border-b border-border/70 bg-background/80 backdrop-blur">
+    <div className="drag-region flex h-10 shrink-0 items-center justify-between border-b border-border/70 bg-background/90">
       {/* macOS: leave space for traffic lights */}
       {isMac && <div className="w-[72px] shrink-0" />}
 

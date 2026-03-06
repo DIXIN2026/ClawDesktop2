@@ -71,6 +71,7 @@ const VALID_INVOKE_CHANNELS = [
   'skills:generate',
   'skills:install',
   'skills:install-generated',
+  'skills:import-local',
   'skills:uninstall',
   'skills:list',
   // Tasks

@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 import { ToolCallDisplay } from './ToolCallDisplay';
 import { CodePreview } from '@/components/preview/CodePreview';
 import type { ChatMessage } from '@/stores/chat';
-import type { ComponentPropsWithoutRef } from 'react';
+import { memo, type ComponentPropsWithoutRef } from 'react';
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -43,7 +43,7 @@ function renderImageUrl(message: ChatMessage, index: number): string | null {
   return null;
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isAssistant = message.role === 'assistant';
   const isSystem = message.role === 'system';
@@ -192,4 +192,4 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       )}
     </div>
   );
-}
+});

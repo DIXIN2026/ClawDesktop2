@@ -6,7 +6,7 @@
 import { ipcMain, dialog, shell, app } from 'electron';
 import type { BrowserWindow } from 'electron';
 import { randomUUID } from 'crypto';
-import { mkdirSync, existsSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, existsSync, writeFileSync, rmSync, cpSync, statSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { lookup } from 'node:dns/promises';
 import { join, resolve, sep } from 'node:path';
@@ -53,7 +53,7 @@ import { storeApiKey, getApiKey, deleteApiKey, hasApiKey } from '../security/cre
 import { searchClawHub, downloadSkillManifest } from '../skills/clawhub.js';
 import { WEB_SEARCH_TOOL } from '../skills/builtin/web-search.js';
 import { SkillRegistry } from '../skills/registry.js';
-import type { SkillManifest, SkillTool, SkillToolParameter } from '../skills/loader.js';
+import { loadSkillManifest, loadSkillPrompt, type SkillManifest, type SkillTool, type SkillToolParameter } from '../skills/loader.js';
 import { generateSkillDraft } from '../skills/generator.js';
 import { scanSource } from '../security/skill-scanner.js';
 import { getChannelManager } from '../channels/manager.js';
@@ -1630,6 +1630,52 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     skillRegistry.install(manifest, 'clawhub');
     return true;
   }, 'skills:install'));
+
+  ipcMain.handle('skills:import-local', wrapHandler(async (...args: unknown[]) => {
+    const sourceDirRaw = args[1];
+    if (typeof sourceDirRaw !== 'string' || !sourceDirRaw.trim()) {
+      throw new Error('sourceDir is required');
+    }
+    const sourceDir = resolve(sourceDirRaw.trim());
+    if (!existsSync(sourceDir) || !statSync(sourceDir).isDirectory()) {
+      throw new Error('Invalid skill directory');
+    }
+
+    const manifest = loadSkillManifest(sourceDir);
+    if (!manifest) {
+      throw new Error('manifest.json 或 manifest.yaml 未找到，或格式无效');
+    }
+    const skillId = assertValidSkillId(manifest.id);
+    const skillPrompt = loadSkillPrompt(sourceDir);
+    if (!skillPrompt?.trim()) {
+      throw new Error('SKILL.md 未找到，或内容为空');
+    }
+
+    const localFindings = [
+      ...scanSource(
+        JSON.stringify(manifest, null, 2),
+        `local:${skillId}:manifest.json`,
+      ),
+      ...scanSource(skillPrompt, `local:${skillId}:SKILL.md`),
+    ];
+    const { scanDirectoryWithSummary } = await import('../security/skill-scanner.js');
+    const scanSummary = await scanDirectoryWithSummary(sourceDir);
+    const criticalCount =
+      localFindings.filter((f) => f.severity === 'critical').length + scanSummary.critical;
+    if (criticalCount > 0) {
+      throw new Error(`Skill import blocked by security scan (${criticalCount} critical findings)`);
+    }
+
+    const targetDir = resolveSkillPath(skillId);
+    mkdirSync(getSkillRootPath(), { recursive: true });
+    rmSync(targetDir, { recursive: true, force: true });
+    cpSync(sourceDir, targetDir, { recursive: true, force: true });
+    writeFileSync(join(targetDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
+    writeFileSync(join(targetDir, 'SKILL.md'), skillPrompt, 'utf-8');
+
+    skillRegistry.install(manifest, 'local');
+    return { id: skillId };
+  }, 'skills:import-local'));
 
   ipcMain.handle('skills:uninstall', wrapHandler((...args: unknown[]) => {
     const id = assertValidSkillId(args[1] as string);
