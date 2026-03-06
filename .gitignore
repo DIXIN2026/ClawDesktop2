@@ -51,5 +51,5 @@ tmp/
 
 # Project specific
 #.clawdesktop2-data/
-#.clawdesktop2-session/
+.clawdesktop2-session/
 release/
