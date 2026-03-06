@@ -58,7 +58,15 @@ import { generateSkillDraft } from '../skills/generator.js';
 import { scanSource } from '../security/skill-scanner.js';
 import { getChannelManager } from '../channels/manager.js';
 import { parseTasksFromPRD, parseBugsFromTestReport, createBoardIssuesFromTasks } from '../agents/board-integration.js';
-import { createApprovalRequest, resolveApproval, setApprovalMode, getApprovalMode } from '../security/approval.js';
+import {
+  createApprovalRequest,
+  resolveApproval,
+  setApprovalMode,
+  getApprovalMode,
+  getRememberedRules,
+  clearRememberedRules,
+  removeRememberedRule,
+} from '../security/approval.js';
 import { createAgentExecutor } from '../engine/agent-executor.js';
 import type { AgentExecuteOptions } from '../engine/agent-executor.js';
 import { getOrchestrator } from '../engine/orchestrator.js';
@@ -1775,6 +1783,28 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     setApprovalMode(mode);
     return true;
   }, 'approval:mode:set'));
+
+  ipcMain.handle('approval:rules:list', wrapHandler(() => {
+    return getRememberedRules()
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map((rule) => ({
+        id: `${rule.action}:${rule.pattern}`,
+        action: rule.approved ? 'allow' : 'deny',
+        approvalAction: rule.action,
+        pattern: rule.pattern,
+        createdAt: rule.createdAt,
+      }));
+  }, 'approval:rules:list'));
+
+  ipcMain.handle('approval:rules:clear', wrapHandler(() => {
+    clearRememberedRules();
+    return true;
+  }, 'approval:rules:clear'));
+
+  ipcMain.handle('approval:rules:remove', wrapHandler((...args: unknown[]) => {
+    const payload = args[1] as { action: 'shell-command' | 'file-write-outside' | 'network-access' | 'git-push'; pattern: string };
+    return removeRememberedRule(payload.action, payload.pattern);
+  }, 'approval:rules:remove'));
 
   // =========================================================================
   // File / Directory

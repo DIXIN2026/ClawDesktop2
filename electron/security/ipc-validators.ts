@@ -211,6 +211,11 @@ const schemas: Record<string, z.ZodType<unknown>> = {
     safeString(128),
   ]),
 
+  'skills:import-local': z.tuple([
+    z.unknown(),
+    safePathSchema,
+  ]),
+
   'skills:scan': z.tuple([
     z.unknown(),
     safePathSchema,
@@ -266,6 +271,22 @@ const schemas: Record<string, z.ZodType<unknown>> = {
   'approval:mode:set': z.tuple([
     z.unknown(),
     z.enum(['suggest', 'auto-edit', 'full-auto']),
+  ]),
+
+  'approval:rules:list': z.tuple([
+    z.unknown(),
+  ]),
+
+  'approval:rules:clear': z.tuple([
+    z.unknown(),
+  ]),
+
+  'approval:rules:remove': z.tuple([
+    z.unknown(),
+    z.object({
+      action: z.enum(['shell-command', 'file-write-outside', 'network-access', 'git-push']),
+      pattern: safeText(512),
+    }),
   ]),
 
   'board:issues:list': z.tuple([
@@ -662,7 +683,9 @@ const schemas: Record<string, z.ZodType<unknown>> = {
  */
 export function validateIpcArgs(channel: string, args: unknown[]): void {
   const schema = schemas[channel];
-  if (!schema) return; // No schema defined — pass through
+  if (!schema) {
+    throw new Error(`No IPC schema defined for channel: ${channel}`);
+  }
 
   schema.parse(args);
 }

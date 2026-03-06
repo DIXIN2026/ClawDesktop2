@@ -181,9 +181,9 @@ export function ChatPage() {
   }, [abortGeneration]);
 
   const handleApprovalRespond = useCallback(
-    (approved: boolean) => {
+    (approved: boolean, remember?: { pattern: string }) => {
       if (pendingApproval) {
-        void respondToApproval(pendingApproval.id, approved);
+        void respondToApproval(pendingApproval.id, approved, remember);
       }
     },
     [pendingApproval, respondToApproval],

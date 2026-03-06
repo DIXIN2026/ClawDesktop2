@@ -17,6 +17,8 @@ interface RememberedRule {
   id: string;
   pattern: string;
   action: 'allow' | 'deny';
+  approvalAction: 'shell-command' | 'file-write-outside' | 'network-access' | 'git-push';
+  createdAt: number;
 }
 
 // ── Approval Mode Config ───────────────────────────────────────────
@@ -56,7 +58,7 @@ export function SecuritySettings() {
   // ── Load initial state from backend ──────────────────────────────
 
   useEffect(() => {
-    ipc.invoke<string>('approval:mode:get').then((mode) => {
+    ipc.getApprovalMode().then((mode) => {
       if (mode && typeof mode === 'string') {
         setApprovalMode(mode as ApprovalMode);
       }
@@ -65,13 +67,17 @@ export function SecuritySettings() {
     ipc.mountAllowlistList().then((paths) => {
       setWhitelist(paths);
     }).catch(() => { /* use default */ });
+
+    ipc.listApprovalRules().then((rules) => {
+      setRememberedRules(rules);
+    }).catch(() => { /* use default */ });
   }, []);
 
   // ── Approval mode ────────────────────────────────────────────────
 
   const handleModeChange = useCallback((mode: ApprovalMode) => {
     setApprovalMode(mode);
-    ipc.invoke('approval:mode:set', mode).catch(() => {
+    ipc.setApprovalMode(mode).catch(() => {
       toast.error('保存审批模式失败');
     });
     toast.success(`已切换到${MODES.find((m) => m.value === mode)?.label ?? mode}`);
@@ -107,12 +113,27 @@ export function SecuritySettings() {
   // ── Remembered rules ─────────────────────────────────────────────
 
   const clearRules = useCallback(() => {
-    setRememberedRules([]);
-    toast.success('已清除所有记住的审批规则');
+    ipc.clearApprovalRules().then(() => {
+      setRememberedRules([]);
+      toast.success('已清除所有记住的审批规则');
+    }).catch(() => {
+      toast.error('清除审批规则失败');
+    });
   }, []);
 
-  const removeRule = useCallback((id: string) => {
-    setRememberedRules((prev) => prev.filter((r) => r.id !== id));
+  const removeRule = useCallback((rule: RememberedRule) => {
+    ipc.removeApprovalRule({
+      approvalAction: rule.approvalAction,
+      pattern: rule.pattern,
+    }).then((removed) => {
+      if (!removed) {
+        toast.error('规则不存在或已删除');
+        return;
+      }
+      setRememberedRules((prev) => prev.filter((r) => r.id !== rule.id));
+    }).catch(() => {
+      toast.error('删除审批规则失败');
+    });
   }, []);
 
   // ── Render ───────────────────────────────────────────────────────
@@ -254,7 +275,7 @@ export function SecuritySettings() {
                   variant="ghost"
                   size="sm"
                   className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
-                  onClick={() => removeRule(rule.id)}
+                  onClick={() => removeRule(rule)}
                 >
                   <X className="h-3.5 w-3.5" />
                 </Button>

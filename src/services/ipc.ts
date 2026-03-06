@@ -127,6 +127,14 @@ interface ChannelStatusEvent {
   timestamp: number;
 }
 
+interface ApprovalRule {
+  id: string;
+  action: 'allow' | 'deny';
+  approvalAction: 'shell-command' | 'file-write-outside' | 'network-access' | 'git-push';
+  pattern: string;
+  createdAt: number;
+}
+
 // ── IPC envelope ────────────────────────────────────────────────────
 
 interface IpcResponse<T = unknown> {
@@ -232,10 +240,14 @@ export const ipc = {
     invoke<boolean>('git:worktree-remove', path, workDirectory),
 
   // ─── Approval ─────────────────────────────────────────────────────
-  respondApproval: (approvalId: string, approved: boolean) =>
-    invoke<boolean>('approval:response', approvalId, approved),
+  respondApproval: (approvalId: string, approved: boolean, remember?: { pattern: string }) =>
+    invoke<boolean>('approval:response', approvalId, approved, remember),
   getApprovalMode: () => invoke<string>('approval:mode:get'),
   setApprovalMode: (mode: string) => invoke<boolean>('approval:mode:set', mode),
+  listApprovalRules: () => invoke<ApprovalRule[]>('approval:rules:list'),
+  clearApprovalRules: () => invoke<boolean>('approval:rules:clear'),
+  removeApprovalRule: (rule: { approvalAction: ApprovalRule['approvalAction']; pattern: string }) =>
+    invoke<boolean>('approval:rules:remove', { action: rule.approvalAction, pattern: rule.pattern }),
 
   // ─── Tasks ────────────────────────────────────────────────────────
   listTasks: () => invoke<Record<string, unknown>[]>('tasks:list'),

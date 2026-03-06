@@ -84,7 +84,7 @@ interface ChatState {
   addToolCall: (toolCall: ToolCallInfo) => void;
   updateToolCall: (toolCallId: string, updates: Partial<ToolCallInfo>) => void;
   setApproval: (approval: ApprovalRequest | null) => void;
-  respondToApproval: (approvalId: string, approved: boolean) => Promise<void>;
+  respondToApproval: (approvalId: string, approved: boolean, remember?: { pattern: string }) => Promise<void>;
   respondToClarification: (clarificationId: string, answers: Record<string, string>) => Promise<void>;
   setCurrentSessionAgent: (agentType: 'coding' | 'requirements' | 'design' | 'testing') => void;
 }
@@ -148,6 +148,7 @@ function normalizeMessage(raw: Record<string, unknown>): ChatMessage {
 // ── Store ───────────────────────────────────────────────────────────
 
 export const useChatStore = create<ChatState>((set, get) => {
+  const STREAM_FLUSH_INTERVAL_MS = 48;
   // Listener cleanup handle kept in closure
   let streamCleanup: (() => void) | undefined;
   let approvalCleanup: (() => void) | undefined;
@@ -174,7 +175,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     streamDeltaFlushTimer = setTimeout(() => {
       streamDeltaFlushTimer = undefined;
       flushPendingStreamDelta();
-    }, 16);
+    }, STREAM_FLUSH_INTERVAL_MS);
   }
 
   function clearPendingStreamDelta() {
@@ -641,8 +642,8 @@ export const useChatStore = create<ChatState>((set, get) => {
       });
     },
 
-    respondToApproval: async (approvalId, approved) => {
-      await ipc.respondApproval(approvalId, approved);
+    respondToApproval: async (approvalId, approved, remember) => {
+      await ipc.respondApproval(approvalId, approved, remember);
       set({ pendingApproval: null });
     },
 

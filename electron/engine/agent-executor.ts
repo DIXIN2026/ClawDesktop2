@@ -39,6 +39,7 @@ import {
 const PREVIEW_SCREENSHOT_WIDTH = 1365;
 const PREVIEW_SCREENSHOT_HEIGHT = 900;
 const PREVIEW_SCREENSHOT_TIMEOUT_MS = 20_000;
+const COMPACTION_SYSTEM_PROMPT = 'You are a conversation summarizer. Return only a concise factual summary that preserves key decisions, technical context, user preferences, constraints, and next actions.';
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -536,7 +537,8 @@ async function executeApiMode(
   trySnapshot(workDirectory, forwardEvent);
 
   // --- Memory: async compaction check + embedding generation ---
-  tryAsyncMemoryOps(sessionId, 8192, embeddingAdapter ?? null, newChunkIds);
+  const summarizeForCompaction = createCompactionSummarizeFn(options);
+  tryAsyncMemoryOps(sessionId, 8192, embeddingAdapter ?? null, newChunkIds, summarizeForCompaction);
 }
 
 function buildAnthropicUserContent(
@@ -734,6 +736,23 @@ function createLLMCaller(options: AgentExecuteOptions): (params: LLMCallParams) 
   };
 }
 
+function createCompactionSummarizeFn(
+  options: AgentExecuteOptions,
+): ((prompt: string) => Promise<string>) | null {
+  if (!options.apiProtocol || !options.baseUrl || !options.modelId) return null;
+  const callLLM = createLLMCaller(options);
+  return async (prompt: string) => {
+    let summary = '';
+    for await (const delta of callLLM({
+      system: COMPACTION_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: prompt }],
+    })) {
+      summary += delta;
+    }
+    return summary.trim();
+  };
+}
+
 async function executeSpecializedAgent(
   options: AgentExecuteOptions,
   signal: AbortSignal,
@@ -756,6 +775,7 @@ async function executeSpecializedAgent(
     attachments = [],
   } = options;
   const callLLM = createLLMCaller(options);
+  const summarizeForCompaction = createCompactionSummarizeFn(options);
   const imageAttachments = attachments.filter((att) =>
     att.type === 'image'
     && typeof att.mimeType === 'string'
@@ -800,7 +820,7 @@ async function executeSpecializedAgent(
       }
     }
     trySnapshot(workDirectory, forwardEvent);
-    tryAsyncMemoryOps(sessionId, 8192, embeddingAdapter ?? null, newChunkIds);
+    tryAsyncMemoryOps(sessionId, 8192, embeddingAdapter ?? null, newChunkIds, summarizeForCompaction);
     return;
   }
 
@@ -832,7 +852,7 @@ async function executeSpecializedAgent(
       }
     }
     trySnapshot(workDirectory, forwardEvent);
-    tryAsyncMemoryOps(sessionId, 8192, embeddingAdapter ?? null, newChunkIds);
+    tryAsyncMemoryOps(sessionId, 8192, embeddingAdapter ?? null, newChunkIds, summarizeForCompaction);
     return;
   }
 
@@ -853,7 +873,7 @@ async function executeSpecializedAgent(
       }
     }
     trySnapshot(workDirectory, forwardEvent);
-    tryAsyncMemoryOps(sessionId, 8192, embeddingAdapter ?? null, newChunkIds);
+    tryAsyncMemoryOps(sessionId, 8192, embeddingAdapter ?? null, newChunkIds, summarizeForCompaction);
     return;
   }
 
@@ -1148,19 +1168,20 @@ function tryAsyncMemoryOps(
   maxContextTokens: number,
   embeddingAdapter: EmbeddingAdapter | null,
   newChunkIds: string[],
+  summarizeForCompaction?: ((prompt: string) => Promise<string>) | null,
 ): void {
   // Fire-and-forget: compaction check
   (async () => {
     try {
       if (shouldCompact(sessionId, maxContextTokens)) {
-        // Simple summarize function that calls the same LLM
-        // This is a best-effort compaction — use a simple fetch-based call
-        await compactSession(sessionId, maxContextTokens, async (prompt) => {
-          // Compaction uses a minimal prompt; caller should provide a real summarize fn
-          // For now, return the first 500 chars as a basic fallback
-          console.warn('[Memory] Compaction triggered but no LLM callback configured — using truncation fallback');
-          return prompt.slice(0, 500);
-        });
+        await compactSession(
+          sessionId,
+          maxContextTokens,
+          summarizeForCompaction ?? (async (prompt) => {
+            console.warn('[Memory] Compaction triggered without summarize callback — using truncation fallback');
+            return prompt.slice(0, 500);
+          }),
+        );
       }
     } catch (err) {
       console.warn('[Memory] Compaction failed:', err instanceof Error ? err.message : String(err));

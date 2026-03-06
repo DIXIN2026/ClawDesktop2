@@ -3,9 +3,10 @@
  * Reads skill manifests from directories (manifest.yaml / manifest.json)
  * and loads SKILL.md as system prompts.
  */
-import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
+import { readdir, stat } from 'fs/promises';
 import { join } from 'path';
-import { isScannable, scanSource, type SkillScanFinding } from '../security/skill-scanner.js';
+import { scanDirectory } from '../security/skill-scanner.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -270,44 +271,6 @@ function mapSeverity(severity: string): 'low' | 'medium' | 'high' | 'critical' {
   }
 }
 
-const MAX_SCAN_FILE_BYTES = 1024 * 1024; // 1 MB
-const MAX_SCAN_FILES = 500;
-
-function scanSkillDirectorySync(dirPath: string): SkillScanFinding[] {
-  const findings: SkillScanFinding[] = [];
-  let fileCount = 0;
-
-  function walk(dir: string): void {
-    if (fileCount >= MAX_SCAN_FILES) return;
-    let entries: string[];
-    try {
-      entries = readdirSync(dir);
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (fileCount >= MAX_SCAN_FILES) return;
-      if (entry.startsWith('.') || entry === 'node_modules') continue;
-      const fullPath = join(dir, entry);
-      try {
-        const st = statSync(fullPath);
-        if (st.isDirectory()) {
-          walk(fullPath);
-        } else if (isScannable(entry) && st.size <= MAX_SCAN_FILE_BYTES) {
-          fileCount += 1;
-          const source = readFileSync(fullPath, 'utf-8');
-          findings.push(...scanSource(source, fullPath));
-        }
-      } catch {
-        // Skip unreadable
-      }
-    }
-  }
-
-  walk(dirPath);
-  return findings;
-}
-
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -344,44 +307,44 @@ export function loadSkillManifest(skillDir: string): SkillManifest | null {
  * Load all skills from a parent directory.
  * Each subdirectory is treated as a potential skill folder.
  */
-export function loadSkillsFromDirectory(dir: string, runSecurityScan = true): SkillManifest[] {
+export async function loadSkillsFromDirectory(dir: string, runSecurityScan = true): Promise<SkillManifest[]> {
   const skills: SkillManifest[] = [];
 
-  if (!existsSync(dir)) return skills;
-
+  let entries: string[];
   try {
-    const entries = readdirSync(dir);
-    for (const entry of entries) {
-      const fullPath = join(dir, entry);
-      try {
-        if (statSync(fullPath).isDirectory()) {
-          const manifest = loadSkillManifest(fullPath);
-          if (manifest) {
-            if (runSecurityScan) {
-              try {
-                const issues = scanSkillDirectorySync(fullPath);
-                if (issues.length > 0) {
-                  manifest.securityIssues = issues.map((f) => ({
-                    rule: f.ruleId,
-                    severity: mapSeverity(f.severity),
-                    file: f.file,
-                    line: f.line,
-                    snippet: f.evidence,
-                  }));
-                }
-              } catch {
-                // Security scan failure should not block skill loading
-              }
+    entries = await readdir(dir);
+  } catch {
+    return skills;
+  }
+
+  for (const entry of entries) {
+    const fullPath = join(dir, entry);
+    try {
+      const st = await stat(fullPath);
+      if (!st.isDirectory()) continue;
+      const manifest = loadSkillManifest(fullPath);
+      if (manifest) {
+        if (runSecurityScan) {
+          try {
+            const findings = await scanDirectory(fullPath, { maxFiles: 500, maxFileBytes: 1024 * 1024 });
+            if (findings.length > 0) {
+              manifest.securityIssues = findings.map((f) => ({
+                rule: f.ruleId,
+                severity: mapSeverity(f.severity),
+                file: f.file,
+                line: f.line,
+                snippet: f.evidence,
+              }));
             }
-            skills.push(manifest);
+          } catch {
+            void 0;
           }
         }
-      } catch {
-        // Skip unreadable entries
+        skills.push(manifest);
       }
+    } catch {
+      continue;
     }
-  } catch {
-    // Directory not readable
   }
 
   return skills;

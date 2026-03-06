@@ -10,39 +10,48 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
+import { Input } from '@/components/ui/input';
 import type { ApprovalRequest } from '@/stores/chat';
 
 interface ApprovalDialogProps {
   approval: ApprovalRequest;
-  onRespond: (approved: boolean) => void;
+  onRespond: (approved: boolean, remember?: { pattern: string }) => void;
 }
 
 const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 export function ApprovalDialog({ approval, onRespond }: ApprovalDialogProps) {
   const [remainingMs, setRemainingMs] = useState(TIMEOUT_MS);
+  const [rememberDecision, setRememberDecision] = useState(false);
+  const [rememberPattern, setRememberPattern] = useState('');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const respondedRef = useRef(false);
 
   useEffect(() => {
     respondedRef.current = false;
     const startTime = Date.now();
     setRemainingMs(TIMEOUT_MS);
+    setRememberDecision(false);
+    setRememberPattern('');
 
     intervalRef.current = setInterval(() => {
       const elapsed = Date.now() - startTime;
       const remaining = Math.max(0, TIMEOUT_MS - elapsed);
       setRemainingMs(remaining);
-
-      if (remaining <= 0 && !respondedRef.current) {
-        respondedRef.current = true;
-        onRespond(false);
-      }
     }, 1000);
+    timeoutRef.current = setTimeout(() => {
+      if (respondedRef.current) return;
+      respondedRef.current = true;
+      onRespond(false);
+    }, TIMEOUT_MS);
 
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
+      }
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
       }
     };
   }, [approval.id, onRespond]);
@@ -53,7 +62,14 @@ export function ApprovalDialog({ approval, onRespond }: ApprovalDialogProps) {
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
     }
-    onRespond(approved);
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+    const trimmedPattern = rememberPattern.trim();
+    const remember = rememberDecision && trimmedPattern.length > 0
+      ? { pattern: trimmedPattern }
+      : undefined;
+    onRespond(approved, remember);
   };
 
   const remainingSec = Math.ceil(remainingMs / 1000);
@@ -104,6 +120,25 @@ export function ApprovalDialog({ approval, onRespond }: ApprovalDialogProps) {
               </span>
             </div>
             <Progress value={progressPercent} className="h-1.5" />
+          </div>
+
+          <div className="space-y-2 rounded-md border p-3">
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5"
+                checked={rememberDecision}
+                onChange={(e) => setRememberDecision(e.target.checked)}
+              />
+              记住本次决策
+            </label>
+            {rememberDecision && (
+              <Input
+                value={rememberPattern}
+                onChange={(e) => setRememberPattern(e.target.value)}
+                placeholder="输入匹配模式，如 npm install"
+              />
+            )}
           </div>
         </div>
 

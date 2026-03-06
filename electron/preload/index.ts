@@ -110,6 +110,9 @@ const VALID_INVOKE_CHANNELS = [
   'approval:response',
   'approval:mode:get',
   'approval:mode:set',
+  'approval:rules:list',
+  'approval:rules:clear',
+  'approval:rules:remove',
   // File
   'file:open',
   'directory:select',

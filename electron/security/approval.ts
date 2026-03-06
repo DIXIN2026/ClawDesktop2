@@ -4,6 +4,7 @@
  * Supports three modes: suggest (default), auto-edit, full-auto
  */
 import type { BrowserWindow } from 'electron';
+import Store from 'electron-store';
 
 export type ApprovalAction = 'shell-command' | 'file-write-outside' | 'network-access' | 'git-push';
 export type ApprovalMode = 'suggest' | 'auto-edit' | 'full-auto';
@@ -18,11 +19,16 @@ export interface ApprovalRequest {
   status: 'pending' | 'approved' | 'denied';
 }
 
-interface RememberedRule {
+export interface RememberedRule {
   action: ApprovalAction;
   pattern: string;
   approved: boolean;
   createdAt: number;
+}
+
+interface ApprovalStoreData {
+  approvalMode: ApprovalMode;
+  rememberedRules: RememberedRule[];
 }
 
 const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
@@ -34,6 +40,74 @@ const rememberedRules: RememberedRule[] = [];
 
 let approvalMode: ApprovalMode = 'suggest';
 let mainWindow: BrowserWindow | null = null;
+let approvalStore: Store<ApprovalStoreData> | null = null;
+
+function getApprovalStore(): Store<ApprovalStoreData> | null {
+  if (approvalStore) return approvalStore;
+  try {
+    approvalStore = new Store<ApprovalStoreData>({ name: 'approval' });
+    return approvalStore;
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeRememberedRule(raw: unknown): RememberedRule | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const record = raw as Record<string, unknown>;
+  const action = record.action;
+  const pattern = record.pattern;
+  const approved = record.approved;
+  const createdAt = record.createdAt;
+  if (
+    action !== 'shell-command'
+    && action !== 'file-write-outside'
+    && action !== 'network-access'
+    && action !== 'git-push'
+  ) {
+    return null;
+  }
+  if (typeof pattern !== 'string' || pattern.trim().length === 0) return null;
+  if (typeof approved !== 'boolean') return null;
+  if (typeof createdAt !== 'number' || !Number.isFinite(createdAt)) return null;
+  return {
+    action,
+    pattern: pattern.trim(),
+    approved,
+    createdAt,
+  };
+}
+
+function persistRememberedRules(): void {
+  const store = getApprovalStore();
+  store?.set('rememberedRules', rememberedRules);
+}
+
+function persistApprovalMode(): void {
+  const store = getApprovalStore();
+  store?.set('approvalMode', approvalMode);
+}
+
+function restoreApprovalState(): void {
+  const store = getApprovalStore();
+  if (!store) return;
+  const storedMode = store.get('approvalMode');
+  if (storedMode === 'suggest' || storedMode === 'auto-edit' || storedMode === 'full-auto') {
+    approvalMode = storedMode;
+  }
+  const storedRules = store.get('rememberedRules');
+  if (Array.isArray(storedRules)) {
+    rememberedRules.length = 0;
+    for (const rawRule of storedRules) {
+      const parsed = sanitizeRememberedRule(rawRule);
+      if (parsed) {
+        rememberedRules.push(parsed);
+      }
+    }
+  }
+}
+
+restoreApprovalState();
 
 export function setApprovalWindow(win: BrowserWindow): void {
   mainWindow = win;
@@ -41,6 +115,7 @@ export function setApprovalWindow(win: BrowserWindow): void {
 
 export function setApprovalMode(mode: ApprovalMode): void {
   approvalMode = mode;
+  persistApprovalMode();
 }
 
 export function getApprovalMode(): ApprovalMode {
@@ -60,12 +135,15 @@ function findRememberedRule(action: ApprovalAction, details: string): Remembered
 }
 
 export function addRememberedRule(action: ApprovalAction, pattern: string, approved: boolean): void {
-  const existing = rememberedRules.findIndex(r => r.action === action && r.pattern === pattern);
+  const normalizedPattern = pattern.trim();
+  if (!normalizedPattern) return;
+  const existing = rememberedRules.findIndex(r => r.action === action && r.pattern === normalizedPattern);
   if (existing !== -1) {
-    rememberedRules[existing] = { action, pattern, approved, createdAt: Date.now() };
+    rememberedRules[existing] = { action, pattern: normalizedPattern, approved, createdAt: Date.now() };
   } else {
-    rememberedRules.push({ action, pattern, approved, createdAt: Date.now() });
+    rememberedRules.push({ action, pattern: normalizedPattern, approved, createdAt: Date.now() });
   }
+  persistRememberedRules();
 }
 
 export function getRememberedRules(): RememberedRule[] {
@@ -74,6 +152,22 @@ export function getRememberedRules(): RememberedRule[] {
 
 export function clearRememberedRules(): void {
   rememberedRules.length = 0;
+  persistRememberedRules();
+}
+
+export function removeRememberedRule(action: ApprovalAction, pattern: string): boolean {
+  const normalizedPattern = pattern.trim();
+  const before = rememberedRules.length;
+  for (let i = rememberedRules.length - 1; i >= 0; i -= 1) {
+    if (rememberedRules[i]?.action === action && rememberedRules[i]?.pattern === normalizedPattern) {
+      rememberedRules.splice(i, 1);
+    }
+  }
+  const changed = rememberedRules.length !== before;
+  if (changed) {
+    persistRememberedRules();
+  }
+  return changed;
 }
 
 function shouldAutoApprove(action: ApprovalAction, details: string): boolean | null {

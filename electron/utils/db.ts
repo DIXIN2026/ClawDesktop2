@@ -16,6 +16,14 @@ export type RunResult = Database.RunResult;
 // ---------------------------------------------------------------------------
 
 let db: Database.Database | null = null;
+const DB_OPEN_RETRY_DELAYS_MS = [0, 120, 300, 700];
+const DB_BUSY_TIMEOUT_MS = 5000;
+
+function sleepSync(ms: number): void {
+  if (ms <= 0) return;
+  const lock = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(lock, 0, 0, ms);
+}
 
 function getDb(): Database.Database {
   if (!db) {
@@ -303,25 +311,29 @@ export function initDatabase(dbPath?: string): void {
   let lastError: unknown = null;
 
   for (const candidatePath of candidatePaths) {
-    let openedDb: Database.Database | null = null;
-    try {
-      mkdirSync(dirname(candidatePath), { recursive: true });
-      openedDb = new Database(candidatePath);
-      openedDb.pragma('journal_mode = WAL');
-      openedDb.pragma('synchronous = NORMAL');
-      openedDb.pragma('foreign_keys = ON');
-      openedDb.exec(SCHEMA_SQL);
-      db = openedDb;
-      runMigrations();
-      return;
-    } catch (err) {
-      lastError = err;
+    for (let attempt = 0; attempt < DB_OPEN_RETRY_DELAYS_MS.length; attempt += 1) {
+      const retryDelay = DB_OPEN_RETRY_DELAYS_MS[attempt] ?? 0;
+      sleepSync(retryDelay);
+      let openedDb: Database.Database | null = null;
       try {
-        openedDb?.close();
-      } catch {
-        void 0;
+        mkdirSync(dirname(candidatePath), { recursive: true });
+        openedDb = new Database(candidatePath, { timeout: DB_BUSY_TIMEOUT_MS });
+        openedDb.pragma('journal_mode = WAL');
+        openedDb.pragma('synchronous = NORMAL');
+        openedDb.pragma('foreign_keys = ON');
+        openedDb.exec(SCHEMA_SQL);
+        db = openedDb;
+        runMigrations();
+        return;
+      } catch (err) {
+        lastError = err;
+        try {
+          openedDb?.close();
+        } catch {
+          void 0;
+        }
+        db = null;
       }
-      db = null;
     }
   }
 

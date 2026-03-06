@@ -64,13 +64,76 @@ function loadAllowlist(): MountAllowlist {
 }
 
 function matchGlobPattern(path: string, pattern: string): boolean {
-  // Convert glob to regex: ** = any path segments, * = any chars within segment
-  const regexStr = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')  // escape regex specials except * and ?
-    .replace(/\*\*/g, '{{GLOBSTAR}}')
-    .replace(/\*/g, '[^/]*')
-    .replace(/{{GLOBSTAR}}/g, '.*');
-  return new RegExp(`(^|/)${regexStr}($|/)`).test(path);
+  const normalizedPath = normalize(resolve(path)).replace(/\\/g, '/');
+  const normalizedPattern = normalize(pattern).replace(/\\/g, '/');
+  const pathSegments = normalizedPath.split('/').filter((segment) => segment.length > 0);
+  const patternSegments = normalizedPattern.split('/').filter((segment) => segment.length > 0);
+  const memo = new Map<string, boolean>();
+
+  function getSegmentRegex(segment: string): RegExp {
+    let regex = '^';
+    for (let i = 0; i < segment.length; i += 1) {
+      const ch = segment[i];
+      if (ch === '*') {
+        regex += '[^/]*';
+        continue;
+      }
+      if (ch === '?') {
+        regex += '[^/]';
+        continue;
+      }
+      if (ch === '[') {
+        const end = segment.indexOf(']', i + 1);
+        if (end > i + 1) {
+          const rawClass = segment.slice(i + 1, end);
+          const negated = rawClass.startsWith('!');
+          const classBody = (negated ? rawClass.slice(1) : rawClass).replace(/\\/g, '\\\\');
+          regex += `[${negated ? '^' : ''}${classBody}]`;
+          i = end;
+          continue;
+        }
+      }
+      regex += ch.replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
+    }
+    regex += '$';
+    return new RegExp(regex);
+  }
+
+  function matches(patternIndex: number, pathIndex: number): boolean {
+    const cacheKey = `${patternIndex}:${pathIndex}`;
+    const cached = memo.get(cacheKey);
+    if (cached !== undefined) return cached;
+
+    if (patternIndex === patternSegments.length) {
+      const matched = pathIndex === pathSegments.length;
+      memo.set(cacheKey, matched);
+      return matched;
+    }
+
+    const currentPattern = patternSegments[patternIndex];
+    if (currentPattern === '**') {
+      for (let i = pathIndex; i <= pathSegments.length; i += 1) {
+        if (matches(patternIndex + 1, i)) {
+          memo.set(cacheKey, true);
+          return true;
+        }
+      }
+      memo.set(cacheKey, false);
+      return false;
+    }
+
+    if (pathIndex >= pathSegments.length) {
+      memo.set(cacheKey, false);
+      return false;
+    }
+
+    const segmentRegex = getSegmentRegex(currentPattern);
+    const matched = segmentRegex.test(pathSegments[pathIndex]) && matches(patternIndex + 1, pathIndex + 1);
+    memo.set(cacheKey, matched);
+    return matched;
+  }
+
+  return matches(0, 0);
 }
 
 function isPathBlocked(hostPath: string): boolean {
@@ -85,7 +148,16 @@ function isPathBlocked(hostPath: string): boolean {
 
   // Block paths outside home and outside /tmp
   const allowed = [home, '/tmp', '/var/tmp'];
-  if (!allowed.some(prefix =>
+  const allowedResolved = new Set<string>();
+  for (const prefix of allowed) {
+    allowedResolved.add(normalize(resolve(prefix)));
+    try {
+      allowedResolved.add(normalize(realpathSync(prefix)));
+    } catch {
+      void 0;
+    }
+  }
+  if (![...allowedResolved].some(prefix =>
     normalized === prefix || normalized.startsWith(prefix + '/')
   )) {
     return true;
